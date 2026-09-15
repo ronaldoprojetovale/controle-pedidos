@@ -226,6 +226,29 @@ function compressImage(file) {
 }
 
 /* ---------------------------------------------------------------------
+   Localização (GPS) — usada na etapa de descarregamento
+   --------------------------------------------------------------------- */
+function captureLocation() {
+  return new Promise(function (resolve) {
+    if (!("geolocation" in navigator)) { resolve(null); return; }
+    navigator.geolocation.getCurrentPosition(
+      function (pos) {
+        resolve({
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude,
+          precisao: Math.round(pos.coords.accuracy || 0)
+        });
+      },
+      function () { resolve(null); },
+      { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 }
+    );
+  });
+}
+function mapLink(loc) {
+  return "https://maps.google.com/?q=" + loc.lat + "," + loc.lng;
+}
+
+/* ---------------------------------------------------------------------
    Firestore: pedidos
    --------------------------------------------------------------------- */
 function watchHome() {
@@ -315,20 +338,33 @@ function uploadFotos(etapa, fileList) {
     const file = files[i];
     i++;
     showToast("Enviando foto" + (files.length > 1 ? " (" + i + "/" + files.length + ")" : "") + "...", 6000);
-    compressImage(file).then(function (blob) {
+    const wantsLocation = etapa === "descarregamento";
+    let gotLoc = null;
+    Promise.all([
+      compressImage(file),
+      wantsLocation ? captureLocation() : Promise.resolve(null)
+    ]).then(function (results) {
+      const blob = results[0];
+      gotLoc = results[1];
       const path = "pedidos/" + id + "/" + etapa + "/" + Date.now() + "_" + Math.random().toString(36).slice(2, 8) + ".jpg";
       const ref = storage.ref().child(path);
       return ref.put(blob, { contentType: "image/jpeg" }).then(function () {
         return ref.getDownloadURL();
       }).then(function (url) {
         const fotoObj = { path: path, url: url, usuario: user, criadoEm: Date.now() };
+        if (gotLoc) fotoObj.localizacao = gotLoc;
+        else if (wantsLocation) fotoObj.semLocalizacao = true;
         return db.collection("pedidos").doc(id).update({
           ["etapas." + etapa + ".fotos"]: firebase.firestore.FieldValue.arrayUnion(fotoObj),
           atualizadoEm: Date.now()
         });
       });
     }).then(function () {
-      showToast("Foto registrada ✓", 1400);
+      if (wantsLocation && !gotLoc) {
+        showToast("Foto registrada ✓ (sem localização — verifique a permissão de GPS)", 3200);
+      } else {
+        showToast("Foto registrada ✓", 1400);
+      }
       next();
     }).catch(function (e) {
       console.error(e);
@@ -537,10 +573,13 @@ function renderPedido(user) {
     const last = fotos.length ? fotos[fotos.length - 1] : null;
 
     const grid = fotos.map(function (f, idx) {
+      const locHtml = f.localizacao
+        ? '<a class="tag-loc" href="' + escapeHtml(mapLink(f.localizacao)) + '" target="_blank" rel="noopener">📍 Ver no mapa</a>'
+        : (f.semLocalizacao ? '<span class="tag-loc off">📍 sem GPS</span>' : '');
       return '<div class="photothumb">' +
         '<img src="' + escapeHtml(f.url) + '" loading="lazy">' +
         '<button class="rm" data-action="remove-photo" data-etapa="' + s.key + '" data-idx="' + idx + '" title="Corrigir foto">✕</button>' +
-        '<div class="tag">' + escapeHtml(f.usuario) + '<br>' + formatDateTime(f.criadoEm) + '</div>' +
+        '<div class="tag">' + escapeHtml(f.usuario) + '<br>' + formatDateTime(f.criadoEm) + (locHtml ? '<br>' + locHtml : '') + '</div>' +
       '</div>';
     }).join("");
 
@@ -605,8 +644,11 @@ function renderAdmin(user) {
           const etapa = (p.etapas && p.etapas[s.key]) || { fotos: [] };
           const fotos = etapa.fotos || [];
           const thumbs = fotos.map(function (f) {
+            const locHtml = f.localizacao
+              ? '<a class="tag-loc" href="' + escapeHtml(mapLink(f.localizacao)) + '" target="_blank" rel="noopener">📍 Ver no mapa</a>'
+              : (f.semLocalizacao ? '<span class="tag-loc off">📍 sem GPS</span>' : '');
             return '<div class="photothumb"><img src="' + escapeHtml(f.url) + '" loading="lazy">' +
-              '<div class="tag">' + escapeHtml(f.usuario) + '<br>' + formatDateTime(f.criadoEm) + '</div></div>';
+              '<div class="tag">' + escapeHtml(f.usuario) + '<br>' + formatDateTime(f.criadoEm) + (locHtml ? '<br>' + locHtml : '') + '</div></div>';
           }).join("");
           return '<div style="margin-top:12px;">' +
             '<div style="font-weight:700;font-size:13px;margin-bottom:6px;">' + s.icon + ' ' + escapeHtml(s.label) + (fotos.length ? "" : " — sem fotos") + '</div>' +
