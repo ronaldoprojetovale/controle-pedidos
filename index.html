@@ -142,7 +142,7 @@
   .badge.concluido{background:var(--success-bg);color:var(--success);}
   .photogrid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px;}
   .photothumb{position:relative;aspect-ratio:1/1;border-radius:10px;overflow:hidden;background:var(--bg);border:1px solid var(--border);}
-  .photothumb img{width:100%;height:100%;object-fit:cover;display:block;}
+  .photothumb img{width:100%;height:100%;object-fit:cover;display:block;cursor:pointer;}
   .photothumb .rm{
     position:absolute;top:4px;right:4px;background:rgba(20,20,20,.65);color:#fff;border:none;
     width:24px;height:24px;border-radius:50%;font-size:13px;line-height:1;
@@ -162,6 +162,12 @@
     position:fixed;left:50%;bottom:24px;transform:translateX(-50%);
     background:var(--text);color:var(--bg);padding:12px 18px;border-radius:12px;
     font-size:13.5px;max-width:90%;text-align:center;z-index:100;box-shadow:0 6px 18px rgba(0,0,0,.25);
+  }
+  .lightbox-bg{position:fixed;inset:0;background:rgba(6,7,12,.92);display:flex;align-items:center;justify-content:center;z-index:200;padding:20px;cursor:zoom-out;}
+  .lightbox-img{max-width:100%;max-height:100%;border-radius:10px;box-shadow:0 10px 40px rgba(0,0,0,.5);cursor:zoom-out;}
+  .lightbox-close{
+    position:fixed;top:calc(14px + env(safe-area-inset-top));right:16px;background:rgba(255,255,255,.15);color:#fff;border:none;
+    width:38px;height:38px;border-radius:50%;font-size:18px;line-height:1;z-index:201;
   }
   .modal-bg{position:fixed;inset:0;background:rgba(10,12,20,.55);display:flex;align-items:flex-end;justify-content:center;z-index:50;}
   .modal{background:var(--card);border-radius:18px 18px 0 0;padding:22px 18px calc(22px + env(safe-area-inset-bottom)) 18px;width:100%;max-width:560px;}
