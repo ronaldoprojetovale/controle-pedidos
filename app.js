@@ -191,7 +191,10 @@ function showToast(msg, ms) {
   setTimeout(function () { el.remove(); }, ms || 2600);
 }
 function stageDone(pedido, key) {
-  return !!(pedido && pedido.etapas && pedido.etapas[key] && pedido.etapas[key].fotos && pedido.etapas[key].fotos.length > 0);
+  const etapa = pedido && pedido.etapas && pedido.etapas[key];
+  if (!etapa) return false;
+  if (etapa.dispensado) return true;
+  return !!(etapa.fotos && etapa.fotos.length > 0);
 }
 function stageCount(pedido) {
   return STAGES.reduce(function (n, s) { return n + (stageDone(pedido, s.key) ? 1 : 0); }, 0);
@@ -373,6 +376,28 @@ function uploadFotos(etapa, fileList) {
     });
   }
   next();
+}
+
+function setDispensado(value) {
+  const id = state.pedidoId;
+  const user = getCurrentUser();
+  const update = {
+    "etapas.descarregamento.dispensado": value,
+    atualizadoEm: Date.now()
+  };
+  if (value) {
+    update["etapas.descarregamento.dispensadoPor"] = user;
+    update["etapas.descarregamento.dispensadoEm"] = Date.now();
+  } else {
+    update["etapas.descarregamento.dispensadoPor"] = firebase.firestore.FieldValue.delete();
+    update["etapas.descarregamento.dispensadoEm"] = firebase.firestore.FieldValue.delete();
+  }
+  db.collection("pedidos").doc(id).update(update).then(function () {
+    showToast(value ? "Pedido finalizado (sem entrega) ✓" : "Marcação removida.");
+  }).catch(function (e) {
+    console.error(e);
+    showToast("Erro ao atualizar o pedido.");
+  });
 }
 
 function removeFoto(etapa, foto) {
@@ -569,8 +594,10 @@ function renderPedido(user) {
   const stagesHtml = STAGES.map(function (s) {
     const etapa = (p.etapas && p.etapas[s.key]) || { fotos: [] };
     const fotos = etapa.fotos || [];
-    const done = fotos.length > 0;
+    const dispensado = s.key === "descarregamento" && !!etapa.dispensado;
+    const done = fotos.length > 0 || dispensado;
     const last = fotos.length ? fotos[fotos.length - 1] : null;
+    const badgeLabel = fotos.length > 0 ? "Concluído" : (dispensado ? "Sem entrega" : "Pendente");
 
     const grid = fotos.map(function (f, idx) {
       const locHtml = f.localizacao
@@ -583,15 +610,28 @@ function renderPedido(user) {
       '</div>';
     }).join("");
 
+    let dispensarHtml = "";
+    if (s.key === "descarregamento") {
+      if (dispensado) {
+        dispensarHtml = '<div class="meta" style="color:var(--muted);font-size:12px;margin:10px 0 0 0;">' +
+          '✓ Marcado como finalizado sem entrega' + (etapa.dispensadoPor ? ' por ' + escapeHtml(etapa.dispensadoPor) : '') + (etapa.dispensadoEm ? ' em ' + formatDateTime(etapa.dispensadoEm) : '') + '. ' +
+          '<button class="btn ghost" style="padding:2px 6px;font-size:12px;" data-action="undo-dispensar">Desfazer</button>' +
+        '</div>';
+      } else if (!fotos.length) {
+        dispensarHtml = '<button class="btn secondary" style="margin-top:10px;" data-action="dispensar-entrega">✓ Finalizar (não vai para entrega)</button>';
+      }
+    }
+
     return '<div class="card stage-card ' + (done ? "done" : "") + '">' +
       '<div class="stage-head">' +
         '<div class="num">' + (done ? "✓" : s.icon) + '</div>' +
         '<div class="title">' + escapeHtml(s.label) + '</div>' +
-        '<span class="badge ' + (done ? "concluido" : "pendente") + '">' + (done ? "Concluído" : "Pendente") + '</span>' +
+        '<span class="badge ' + (done ? "concluido" : "pendente") + '">' + badgeLabel + '</span>' +
       '</div>' +
-      (done ? '<div class="meta" style="color:var(--muted);font-size:12px;margin:-6px 0 12px 0;">Último registro: ' + escapeHtml(last.usuario) + ' em ' + formatDateTime(last.criadoEm) + '</div>' : '') +
+      (last ? '<div class="meta" style="color:var(--muted);font-size:12px;margin:-6px 0 12px 0;">Último registro: ' + escapeHtml(last.usuario) + ' em ' + formatDateTime(last.criadoEm) + '</div>' : '') +
       (grid ? '<div class="photogrid">' + grid + '</div>' : '') +
-      '<button class="camerabtn" data-action="take-photo" data-etapa="' + s.key + '">📷 Tirar foto</button>' +
+      (dispensado ? '' : '<button class="camerabtn" data-action="take-photo" data-etapa="' + s.key + '">📷 Tirar foto</button>') +
+      dispensarHtml +
     '</div>';
   }).join("");
 
@@ -650,8 +690,10 @@ function renderAdmin(user) {
             return '<div class="photothumb"><img src="' + escapeHtml(f.url) + '" loading="lazy">' +
               '<div class="tag">' + escapeHtml(f.usuario) + '<br>' + formatDateTime(f.criadoEm) + (locHtml ? '<br>' + locHtml : '') + '</div></div>';
           }).join("");
+          const dispensado = s.key === "descarregamento" && !!etapa.dispensado;
+          const statusSuffix = fotos.length ? "" : (dispensado ? " — finalizado sem entrega" : " — sem fotos");
           return '<div style="margin-top:12px;">' +
-            '<div style="font-weight:700;font-size:13px;margin-bottom:6px;">' + s.icon + ' ' + escapeHtml(s.label) + (fotos.length ? "" : " — sem fotos") + '</div>' +
+            '<div style="font-weight:700;font-size:13px;margin-bottom:6px;">' + s.icon + ' ' + escapeHtml(s.label) + statusSuffix + '</div>' +
             (thumbs ? '<div class="photogrid">' + thumbs + '</div>' : '') +
           '</div>';
         }).join("") +
@@ -715,6 +757,21 @@ document.addEventListener("click", function (e) {
   } else if (action === "take-photo") {
     const input = document.getElementById("file-" + el.getAttribute("data-etapa"));
     if (input) input.click();
+  } else if (action === "dispensar-entrega") {
+    askConfirm({
+      title: "Finalizar sem entrega",
+      text: "Este pedido não vai passar pela etapa de Descarregamento na entrega. Marcar como finalizado?",
+      confirmLabel: "Finalizar",
+      onConfirm: function () { setDispensado(true); }
+    });
+  } else if (action === "undo-dispensar") {
+    askConfirm({
+      title: "Desfazer finalização",
+      text: "Remover a marcação de \"finalizado sem entrega\" deste pedido?",
+      confirmLabel: "Desfazer",
+      danger: true,
+      onConfirm: function () { setDispensado(false); }
+    });
   } else if (action === "remove-photo") {
     const etapa = el.getAttribute("data-etapa");
     const idx = parseInt(el.getAttribute("data-idx"), 10);
