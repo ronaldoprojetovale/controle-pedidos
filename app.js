@@ -468,6 +468,25 @@ function closeConfirm() {
 }
 
 /* ---------------------------------------------------------------------
+   Lightbox (ver foto em tamanho grande)
+   --------------------------------------------------------------------- */
+function openLightbox(url) {
+  if (!url) return;
+  const bg = document.createElement("div");
+  bg.className = "lightbox-bg";
+  bg.id = "photo-lightbox";
+  bg.setAttribute("data-action", "close-lightbox");
+  bg.innerHTML =
+    '<button class="lightbox-close" data-action="close-lightbox" title="Fechar">✕</button>' +
+    '<img class="lightbox-img" src="' + escapeHtml(url) + '">';
+  document.body.appendChild(bg);
+}
+function closeLightbox() {
+  const m = document.getElementById("photo-lightbox");
+  if (m) m.remove();
+}
+
+/* ---------------------------------------------------------------------
    Service worker (instalação como app)
    --------------------------------------------------------------------- */
 function registerServiceWorker() {
@@ -609,7 +628,7 @@ function renderPedido(user) {
         ? '<a class="tag-loc" href="' + escapeHtml(mapLink(f.localizacao)) + '" target="_blank" rel="noopener">📍 Ver no mapa</a>'
         : (f.semLocalizacao ? '<span class="tag-loc off">📍 sem GPS</span>' : '');
       return '<div class="photothumb">' +
-        '<img src="' + escapeHtml(f.url) + '" loading="lazy">' +
+        '<img src="' + escapeHtml(f.url) + '" loading="lazy" data-action="view-photo" data-url="' + escapeHtml(f.url) + '">' +
         '<button class="rm" data-action="remove-photo" data-etapa="' + s.key + '" data-idx="' + idx + '" title="Corrigir foto">✕</button>' +
         '<div class="tag">' + escapeHtml(f.usuario) + '<br>' + formatDateTime(f.criadoEm) + (locHtml ? '<br>' + locHtml : '') + '</div>' +
       '</div>';
@@ -692,7 +711,7 @@ function renderAdmin(user) {
             const locHtml = f.localizacao
               ? '<a class="tag-loc" href="' + escapeHtml(mapLink(f.localizacao)) + '" target="_blank" rel="noopener">📍 Ver no mapa</a>'
               : (f.semLocalizacao ? '<span class="tag-loc off">📍 sem GPS</span>' : '');
-            return '<div class="photothumb"><img src="' + escapeHtml(f.url) + '" loading="lazy">' +
+            return '<div class="photothumb"><img src="' + escapeHtml(f.url) + '" loading="lazy" data-action="view-photo" data-url="' + escapeHtml(f.url) + '">' +
               '<div class="tag">' + escapeHtml(f.usuario) + '<br>' + formatDateTime(f.criadoEm) + (locHtml ? '<br>' + locHtml : '') + '</div></div>';
           }).join("");
           const dispensado = s.key === "descarregamento" && !!etapa.dispensado;
@@ -807,6 +826,17 @@ document.addEventListener("click", function (e) {
     closeConfirm();
     if (cb) cb();
   } else if (action === "confirm-cancel") {
+    closeConfirm();
+  } else if (action === "view-photo") {
+    openLightbox(el.getAttribute("data-url"));
+  } else if (action === "close-lightbox") {
+    closeLightbox();
+  }
+});
+
+document.addEventListener("keydown", function (e) {
+  if (e.key === "Escape") {
+    closeLightbox();
     closeConfirm();
   }
 });
