@@ -199,6 +199,11 @@ function stageDone(pedido, key) {
 function stageCount(pedido) {
   return STAGES.reduce(function (n, s) { return n + (stageDone(pedido, s.key) ? 1 : 0); }, 0);
 }
+function pedidoConcluido(pedido) {
+  const etapaDesc = pedido && pedido.etapas && pedido.etapas.descarregamento;
+  if (etapaDesc && etapaDesc.dispensado) return true;
+  return stageCount(pedido) === 3;
+}
 
 /* ---------------------------------------------------------------------
    Compressão de imagem antes do upload
@@ -543,8 +548,8 @@ function renderTopbar(opts) {
 function renderHome(user) {
   const filter = state.homeFilter;
   let list = state.homeList.slice();
-  if (filter === "pendentes") list = list.filter(function (p) { return stageCount(p) < 3; });
-  if (filter === "concluidos") list = list.filter(function (p) { return stageCount(p) === 3; });
+  if (filter === "pendentes") list = list.filter(function (p) { return !pedidoConcluido(p); });
+  if (filter === "concluidos") list = list.filter(function (p) { return pedidoConcluido(p); });
 
   let rows = list.map(function (p) {
     const dots = STAGES.map(function (s) {
@@ -661,7 +666,7 @@ function bindFileInputs() {
 
 function renderAdmin(user) {
   const total = state.admList.length;
-  const concl = state.admList.filter(function (p) { return stageCount(p) === 3; }).length;
+  const concl = state.admList.filter(function (p) { return pedidoConcluido(p); }).length;
   const pend = total - concl;
   const filterText = (state.admFilter || "").toUpperCase();
   let list = state.admList;
