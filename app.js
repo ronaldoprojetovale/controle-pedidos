@@ -24,6 +24,11 @@ const STAGES = [
   { key: "descarregamento", label: "Descarregamento na entrega", icon: "🏁" }
 ];
 
+const TIPOS_ENTREGA = [
+  { key: "entrega", label: "Entrega", icon: "🚚" },
+  { key: "retirada", label: "Retirada na loja", icon: "🏬" }
+];
+
 /* ---------------------------------------------------------------------
    Firebase init
    --------------------------------------------------------------------- */
@@ -63,6 +68,7 @@ let state = {
   pedidoData: null,
   homeList: [],
   homeFilter: "todos",
+  homeTipoFilter: "todos",
   admList: [],
   admOpenId: null,
   admFilter: ""
@@ -196,13 +202,35 @@ function stageDone(pedido, key) {
   if (etapa.dispensado) return true;
   return !!(etapa.fotos && etapa.fotos.length > 0);
 }
+/* ---------------------------------------------------------------------
+   Tipo do pedido: entrega (padrão, 3 etapas) ou retirada na loja
+   (só a etapa de separação). Pedidos antigos sem o campo tipoEntrega
+   são tratados como "entrega" para manter o comportamento anterior.
+   --------------------------------------------------------------------- */
+function tipoEntregaOf(pedido) {
+  return (pedido && pedido.tipoEntrega === "retirada") ? "retirada" : "entrega";
+}
+function tipoEntregaInfo(pedido) {
+  const key = tipoEntregaOf(pedido);
+  for (let i = 0; i < TIPOS_ENTREGA.length; i++) {
+    if (TIPOS_ENTREGA[i].key === key) return TIPOS_ENTREGA[i];
+  }
+  return TIPOS_ENTREGA[0];
+}
+function stagesForPedido(pedido) {
+  return tipoEntregaOf(pedido) === "retirada" ? STAGES.slice(0, 1) : STAGES;
+}
 function stageCount(pedido) {
-  return STAGES.reduce(function (n, s) { return n + (stageDone(pedido, s.key) ? 1 : 0); }, 0);
+  const stages = stagesForPedido(pedido);
+  return stages.reduce(function (n, s) { return n + (stageDone(pedido, s.key) ? 1 : 0); }, 0);
 }
 function pedidoConcluido(pedido) {
-  const etapaDesc = pedido && pedido.etapas && pedido.etapas.descarregamento;
-  if (etapaDesc && etapaDesc.dispensado) return true;
-  return stageCount(pedido) === 3;
+  const stages = stagesForPedido(pedido);
+  if (tipoEntregaOf(pedido) === "entrega") {
+    const etapaDesc = pedido && pedido.etapas && pedido.etapas.descarregamento;
+    if (etapaDesc && etapaDesc.dispensado) return true;
+  }
+  return stageCount(pedido) === stages.length;
 }
 
 /* ---------------------------------------------------------------------
@@ -303,6 +331,7 @@ function openPedido(rawId) {
           criadoPor: getCurrentUser(),
           criadoEm: now,
           atualizadoEm: now,
+          tipoEntrega: "entrega",
           etapas: {
             separacao: { fotos: [] },
             carregamento: { fotos: [] },
@@ -421,6 +450,20 @@ function setDispensado(value) {
   }).catch(function (e) {
     console.error(e);
     showToast("Erro ao atualizar o pedido.");
+  });
+}
+
+function setTipoEntrega(tipo) {
+  const id = state.pedidoId;
+  db.collection("pedidos").doc(id).update({
+    tipoEntrega: tipo,
+    atualizadoEm: Date.now()
+  }).then(function () {
+    const info = TIPOS_ENTREGA.filter(function (t) { return t.key === tipo; })[0];
+    showToast("Tipo do pedido: " + (info ? info.label : tipo) + " ✓", 1800);
+  }).catch(function (e) {
+    console.error(e);
+    showToast("Erro ao atualizar o tipo do pedido.");
   });
 }
 
@@ -736,17 +779,21 @@ function renderTopbar(opts) {
 
 function renderHome(user) {
   const filter = state.homeFilter;
+  const tipoFilter = state.homeTipoFilter || "todos";
   let list = state.homeList.slice();
   if (filter === "pendentes") list = list.filter(function (p) { return !pedidoConcluido(p); });
   if (filter === "concluidos") list = list.filter(function (p) { return pedidoConcluido(p); });
+  if (tipoFilter !== "todos") list = list.filter(function (p) { return tipoEntregaOf(p) === tipoFilter; });
 
   let rows = list.map(function (p) {
-    const dots = STAGES.map(function (s) {
+    const stages = stagesForPedido(p);
+    const dots = stages.map(function (s) {
       return '<span class="dot ' + (stageDone(p, s.key) ? "on" : "") + '" title="' + escapeHtml(s.label) + '"></span>';
     }).join("");
+    const info = tipoEntregaInfo(p);
     return '<div class="pedido-row" data-action="open-pedido" data-id="' + escapeHtml(p.id) + '">' +
       '<div class="info">' +
-        '<div class="num">Pedido ' + escapeHtml(p.numero || p.id) + '</div>' +
+        '<div class="num">' + info.icon + ' Pedido ' + escapeHtml(p.numero || p.id) + '</div>' +
         '<div class="meta">' + escapeHtml(p.criadoPor || "") + ' · atualizado ' + timeAgo(p.atualizadoEm) + '</div>' +
         '<div class="dots">' + dots + '</div>' +
       '</div>' +
@@ -772,11 +819,18 @@ function renderHome(user) {
       '<div class="chips">' +
         chip("todos", "Todos") + chip("pendentes", "Pendentes") + chip("concluidos", "Concluídos") +
       '</div>' +
+      '<div class="chips">' +
+        tipoChip("todos", "Todos os tipos") +
+        TIPOS_ENTREGA.map(function (t) { return tipoChip(t.key, t.icon + " " + t.label); }).join("") +
+      '</div>' +
       rows +
     '</main>';
 
   function chip(key, label) {
     return '<button class="chip ' + (filter === key ? "active" : "") + '" data-action="filter" data-filter="' + key + '">' + label + '</button>';
+  }
+  function tipoChip(key, label) {
+    return '<button class="chip ' + (tipoFilter === key ? "active" : "") + '" data-action="filter-tipo" data-tipo="' + key + '">' + label + '</button>';
   }
 }
 
@@ -785,7 +839,17 @@ function renderPedido(user) {
   if (!p) {
     return renderTopbar({ title: "Carregando…", back: "go-home" }) + '<main><div class="empty">Abrindo pedido…</div></main>';
   }
-  const stagesHtml = STAGES.map(function (s) {
+  const tipoAtual = tipoEntregaOf(p);
+  const tipoSelectorHtml = '<div class="card" style="padding:12px 14px;">' +
+    '<div style="font-size:12px;color:var(--muted);font-weight:600;margin-bottom:8px;">Tipo do pedido</div>' +
+    '<div class="chips" style="margin-bottom:0;">' +
+      TIPOS_ENTREGA.map(function (t) {
+        return '<button class="chip ' + (tipoAtual === t.key ? "active" : "") + '" data-action="set-tipo-entrega" data-tipo="' + t.key + '">' + t.icon + ' ' + escapeHtml(t.label) + '</button>';
+      }).join("") +
+    '</div>' +
+  '</div>';
+  const stages = stagesForPedido(p);
+  const stagesHtml = stages.map(function (s) {
     const etapa = (p.etapas && p.etapas[s.key]) || { fotos: [] };
     const fotos = etapa.fotos || [];
     const dispensado = s.key === "descarregamento" && !!etapa.dispensado;
@@ -835,7 +899,7 @@ function renderPedido(user) {
   }).join("");
 
   return renderTopbar({ title: "Pedido " + escapeHtml(p.numero || p.id), sub: "criado por " + escapeHtml(p.criadoPor || "—") + " em " + formatDateTime(p.criadoEm), back: "go-home" }) +
-    '<main>' + stagesHtml + '</main>' +
+    '<main>' + tipoSelectorHtml + stagesHtml + '</main>' +
     hiddenFileInputs();
 }
 
@@ -873,13 +937,15 @@ function renderAdmin(user) {
 
   const rows = list.map(function (p) {
     const open = state.admOpenId === p.id;
-    const dots = STAGES.map(function (s) {
+    const stages = stagesForPedido(p);
+    const info = tipoEntregaInfo(p);
+    const dots = stages.map(function (s) {
       return '<span class="dot ' + (stageDone(p, s.key) ? "on" : "") + '"></span>';
     }).join("");
     let body = "";
     if (open) {
       body = '<div class="adm-body">' +
-        STAGES.map(function (s) {
+        stages.map(function (s) {
           const etapa = (p.etapas && p.etapas[s.key]) || { fotos: [] };
           const fotos = etapa.fotos || [];
           const thumbs = fotos.map(function (f) {
@@ -907,7 +973,7 @@ function renderAdmin(user) {
     return '<div class="adm-row">' +
       '<div class="adm-head" data-action="toggle-adm-row" data-id="' + escapeHtml(p.id) + '">' +
         '<div class="info" style="flex:1;">' +
-          '<div class="num">Pedido ' + escapeHtml(p.numero || p.id) + '</div>' +
+          '<div class="num">' + info.icon + ' Pedido ' + escapeHtml(p.numero || p.id) + '</div>' +
           '<div class="meta">' + escapeHtml(p.criadoPor || "") + ' · ' + formatDateTime(p.criadoEm) + '</div>' +
           '<div class="dots">' + dots + '</div>' +
         '</div>' +
@@ -916,6 +982,9 @@ function renderAdmin(user) {
     '</div>';
   }).join("");
 
+  const totalRetirada = state.admList.filter(function (p) { return tipoEntregaOf(p) === "retirada"; }).length;
+  const totalEntrega = total - totalRetirada;
+
   return renderTopbar({ title: "Painel ADM", back: "go-home" }) +
     '<main>' +
       '<div class="stat-grid">' +
@@ -923,6 +992,7 @@ function renderAdmin(user) {
         '<div class="stat"><div class="n">' + concl + '</div><div class="l">concluídos</div></div>' +
         '<div class="stat"><div class="n">' + pend + '</div><div class="l">em andamento</div></div>' +
       '</div>' +
+      '<div class="meta" style="text-align:center;margin:-10px 0 14px 0;">🚚 ' + totalEntrega + ' entrega · 🏬 ' + totalRetirada + ' retirada</div>' +
       '<div class="searchbar">' +
         '<input id="adm-search" type="text" placeholder="Filtrar por número ou usuário" value="' + escapeHtml(state.admFilter) + '">' +
       '</div>' +
@@ -957,6 +1027,24 @@ document.addEventListener("click", function (e) {
   } else if (action === "filter") {
     state.homeFilter = el.getAttribute("data-filter");
     render();
+  } else if (action === "filter-tipo") {
+    state.homeTipoFilter = el.getAttribute("data-tipo");
+    render();
+  } else if (action === "set-tipo-entrega") {
+    const novoTipo = el.getAttribute("data-tipo");
+    const p = state.pedidoData;
+    if (!p || tipoEntregaOf(p) === novoTipo) { /* nada a fazer */ }
+    else if (novoTipo === "retirada" && (stageDone(p, "carregamento") || stageDone(p, "descarregamento"))) {
+      askConfirm({
+        title: "Mudar para retirada na loja",
+        text: "Este pedido já tem registros de carregamento e/ou descarregamento. Eles não serão apagados, mas deixarão de aparecer na tela do pedido. Continuar?",
+        confirmLabel: "Mudar para retirada",
+        danger: true,
+        onConfirm: function () { setTipoEntrega(novoTipo); }
+      });
+    } else {
+      setTipoEntrega(novoTipo);
+    }
   } else if (action === "take-photo") {
     const input = document.getElementById("file-" + el.getAttribute("data-etapa"));
     if (input) input.click();
