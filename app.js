@@ -333,6 +333,14 @@ function createOrOpenFromSearch(raw) {
   goTo("pedido", { id: raw });
 }
 
+function videoExt(type) {
+  if (!type) return "mp4";
+  if (type.indexOf("quicktime") >= 0) return "mov";
+  if (type.indexOf("webm") >= 0) return "webm";
+  if (type.indexOf("3gpp") >= 0) return "3gp";
+  return "mp4";
+}
+
 function uploadFotos(etapa, fileList) {
   const id = state.pedidoId;
   const user = getCurrentUser();
@@ -340,26 +348,36 @@ function uploadFotos(etapa, fileList) {
   if (!files.length) return;
   if (!authReady) { showToast("Ainda conectando ao servidor, aguarde um instante."); return; }
 
+  const MAX_VIDEO_MB = 50;
+
   let i = 0;
   function next() {
     if (i >= files.length) return;
     const file = files[i];
     i++;
-    showToast("Enviando foto" + (files.length > 1 ? " (" + i + "/" + files.length + ")" : "") + "...", 6000);
+    const isVideo = file.type.indexOf("video/") === 0;
+    if (isVideo && file.size > MAX_VIDEO_MB * 1024 * 1024) {
+      showToast("Vídeo muito grande (máx. " + MAX_VIDEO_MB + "MB). Grave um vídeo mais curto.", 3500);
+      next();
+      return;
+    }
+    showToast((isVideo ? "Enviando vídeo" : "Enviando foto") + (files.length > 1 ? " (" + i + "/" + files.length + ")" : "") + "...", 9000);
     const wantsLocation = etapa === "descarregamento";
     let gotLoc = null;
     Promise.all([
-      compressImage(file),
+      isVideo ? Promise.resolve(file) : compressImage(file),
       wantsLocation ? captureLocation() : Promise.resolve(null)
     ]).then(function (results) {
       const blob = results[0];
       gotLoc = results[1];
-      const path = "pedidos/" + id + "/" + etapa + "/" + Date.now() + "_" + Math.random().toString(36).slice(2, 8) + ".jpg";
+      const ext = isVideo ? videoExt(file.type) : "jpg";
+      const path = "pedidos/" + id + "/" + etapa + "/" + Date.now() + "_" + Math.random().toString(36).slice(2, 8) + "." + ext;
       const ref = storage.ref().child(path);
-      return ref.put(blob, { contentType: "image/jpeg" }).then(function () {
+      const contentType = isVideo ? (file.type || "video/mp4") : "image/jpeg";
+      return ref.put(blob, { contentType: contentType }).then(function () {
         return ref.getDownloadURL();
       }).then(function (url) {
-        const fotoObj = { path: path, url: url, usuario: user, criadoEm: Date.now() };
+        const fotoObj = { path: path, url: url, usuario: user, criadoEm: Date.now(), tipo: isVideo ? "video" : "foto" };
         if (gotLoc) fotoObj.localizacao = gotLoc;
         else if (wantsLocation) fotoObj.semLocalizacao = true;
         return db.collection("pedidos").doc(id).update({
@@ -368,15 +386,16 @@ function uploadFotos(etapa, fileList) {
         });
       });
     }).then(function () {
+      const label = isVideo ? "Vídeo registrado" : "Foto registrada";
       if (wantsLocation && !gotLoc) {
-        showToast("Foto registrada ✓ (sem localização — verifique a permissão de GPS)", 3200);
+        showToast(label + " ✓ (sem localização — verifique a permissão de GPS)", 3200);
       } else {
-        showToast("Foto registrada ✓", 1400);
+        showToast(label + " ✓", 1400);
       }
       next();
     }).catch(function (e) {
       console.error(e);
-      showToast("Falha ao enviar a foto. Tente novamente.");
+      showToast("Falha ao enviar. Tente novamente.");
       next();
     });
   }
@@ -470,15 +489,18 @@ function closeConfirm() {
 /* ---------------------------------------------------------------------
    Lightbox (ver foto em tamanho grande)
    --------------------------------------------------------------------- */
-function openLightbox(url) {
+function openLightbox(url, type) {
   if (!url) return;
   const bg = document.createElement("div");
   bg.className = "lightbox-bg";
   bg.id = "photo-lightbox";
   bg.setAttribute("data-action", "close-lightbox");
+  const mediaHtml = type === "video"
+    ? '<video class="lightbox-img" src="' + escapeHtml(url) + '" controls autoplay playsinline onclick="event.stopPropagation()"></video>'
+    : '<img class="lightbox-img" src="' + escapeHtml(url) + '">';
   bg.innerHTML =
     '<button class="lightbox-close" data-action="close-lightbox" title="Fechar">✕</button>' +
-    '<img class="lightbox-img" src="' + escapeHtml(url) + '">';
+    mediaHtml;
   document.body.appendChild(bg);
 }
 function closeLightbox() {
@@ -627,8 +649,13 @@ function renderPedido(user) {
       const locHtml = f.localizacao
         ? '<a class="tag-loc" href="' + escapeHtml(mapLink(f.localizacao)) + '" target="_blank" rel="noopener">📍 Ver no mapa</a>'
         : (f.semLocalizacao ? '<span class="tag-loc off">📍 sem GPS</span>' : '');
+      const isVideo = f.tipo === "video";
+      const mediaHtml = isVideo
+        ? '<video src="' + escapeHtml(f.url) + '" preload="metadata" muted playsinline data-action="view-photo" data-url="' + escapeHtml(f.url) + '" data-type="video"></video>' +
+          '<div class="play-badge">▶</div>'
+        : '<img src="' + escapeHtml(f.url) + '" loading="lazy" data-action="view-photo" data-url="' + escapeHtml(f.url) + '" data-type="foto">';
       return '<div class="photothumb">' +
-        '<img src="' + escapeHtml(f.url) + '" loading="lazy" data-action="view-photo" data-url="' + escapeHtml(f.url) + '">' +
+        mediaHtml +
         '<button class="rm" data-action="remove-photo" data-etapa="' + s.key + '" data-idx="' + idx + '" title="Corrigir foto">✕</button>' +
         '<div class="tag">' + escapeHtml(f.usuario) + '<br>' + formatDateTime(f.criadoEm) + (locHtml ? '<br>' + locHtml : '') + '</div>' +
       '</div>';
@@ -654,7 +681,7 @@ function renderPedido(user) {
       '</div>' +
       (last ? '<div class="meta" style="color:var(--muted);font-size:12px;margin:-6px 0 12px 0;">Último registro: ' + escapeHtml(last.usuario) + ' em ' + formatDateTime(last.criadoEm) + '</div>' : '') +
       (grid ? '<div class="photogrid">' + grid + '</div>' : '') +
-      (dispensado ? '' : '<button class="camerabtn" data-action="take-photo" data-etapa="' + s.key + '">📷 Tirar foto</button>') +
+      (dispensado ? '' : '<button class="camerabtn" data-action="take-photo" data-etapa="' + s.key + '">📷 Foto ou vídeo</button>') +
       dispensarHtml +
     '</div>';
   }).join("");
@@ -666,7 +693,7 @@ function renderPedido(user) {
 
 function hiddenFileInputs() {
   return STAGES.map(function (s) {
-    return '<input type="file" id="file-' + s.key + '" accept="image/*" capture="environment" multiple>';
+    return '<input type="file" id="file-' + s.key + '" accept="image/*,video/*" capture="environment" multiple>';
   }).join("");
 }
 
@@ -711,7 +738,11 @@ function renderAdmin(user) {
             const locHtml = f.localizacao
               ? '<a class="tag-loc" href="' + escapeHtml(mapLink(f.localizacao)) + '" target="_blank" rel="noopener">📍 Ver no mapa</a>'
               : (f.semLocalizacao ? '<span class="tag-loc off">📍 sem GPS</span>' : '');
-            return '<div class="photothumb"><img src="' + escapeHtml(f.url) + '" loading="lazy" data-action="view-photo" data-url="' + escapeHtml(f.url) + '">' +
+            const isVideo = f.tipo === "video";
+            const mediaHtml = isVideo
+              ? '<video src="' + escapeHtml(f.url) + '" preload="metadata" muted playsinline data-action="view-photo" data-url="' + escapeHtml(f.url) + '" data-type="video"></video><div class="play-badge">▶</div>'
+              : '<img src="' + escapeHtml(f.url) + '" loading="lazy" data-action="view-photo" data-url="' + escapeHtml(f.url) + '" data-type="foto">';
+            return '<div class="photothumb">' + mediaHtml +
               '<div class="tag">' + escapeHtml(f.usuario) + '<br>' + formatDateTime(f.criadoEm) + (locHtml ? '<br>' + locHtml : '') + '</div></div>';
           }).join("");
           const dispensado = s.key === "descarregamento" && !!etapa.dispensado;
@@ -828,7 +859,7 @@ document.addEventListener("click", function (e) {
   } else if (action === "confirm-cancel") {
     closeConfirm();
   } else if (action === "view-photo") {
-    openLightbox(el.getAttribute("data-url"));
+    openLightbox(el.getAttribute("data-url"), el.getAttribute("data-type"));
   } else if (action === "close-lightbox") {
     closeLightbox();
   }
