@@ -73,7 +73,8 @@ let state = {
   admOpenId: null,
   admFilter: "",
   pendingFotos: [],
-  pendingTotal: 0
+  pendingTotal: 0,
+  obsDraft: null
 };
 let unsubHome = null;
 let unsubPedido = null;
@@ -481,6 +482,7 @@ function openPedido(rawId) {
   const id = sanitizeId(rawId);
   state.pedidoId = id;
   state.pedidoData = null;
+  state.obsDraft = null;
   teardownPedidoListener();
   render();
 
@@ -663,6 +665,22 @@ function setTipoEntrega(tipo) {
   }).catch(function (e) {
     console.error(e);
     showToast("Erro ao atualizar o tipo do pedido.");
+  });
+}
+
+function setObservacao(texto) {
+  const id = state.pedidoId;
+  const valor = (texto || "").trim();
+  db.collection("pedidos").doc(id).update({
+    observacao: valor,
+    atualizadoEm: Date.now()
+  }).then(function () {
+    state.obsDraft = null;
+    showToast(valor ? "Observação salva ✓" : "Observação removida.", 1600);
+    render();
+  }).catch(function (e) {
+    console.error(e);
+    showToast("Erro ao salvar observação.");
   });
 }
 
@@ -1008,7 +1026,7 @@ function renderHome(user) {
     const info = tipoEntregaInfo(p);
     return '<div class="pedido-row" data-action="open-pedido" data-id="' + escapeHtml(p.id) + '">' +
       '<div class="info">' +
-        '<div class="num">' + info.icon + ' Pedido ' + escapeHtml(p.numero || p.id) + '</div>' +
+        '<div class="num">' + info.icon + ' Pedido ' + escapeHtml(p.numero || p.id) + (p.observacao ? ' <span title="Tem observação">📝</span>' : '') + '</div>' +
         '<div class="meta">' + escapeHtml(p.criadoPor || "") + ' · atualizado ' + timeAgo(p.atualizadoEm) + '</div>' +
         '<div class="dots">' + dots + '</div>' +
       '</div>' +
@@ -1129,8 +1147,15 @@ function renderPedido(user) {
     '</div>';
   }).join("");
 
+  const obsValor = (state.obsDraft !== null && state.obsDraft !== undefined) ? state.obsDraft : (p.observacao || "");
+  const obsHtml = '<div class="card">' +
+    '<div style="font-size:12px;color:var(--muted);font-weight:600;margin-bottom:8px;">📝 Observação (opcional)</div>' +
+    '<textarea id="obs-input" class="obs-textarea" placeholder="Ex: cliente pediu para entregar após 18h, produto avariado, ligar antes de chegar...">' + escapeHtml(obsValor) + '</textarea>' +
+    '<button class="btn secondary" style="margin-top:10px;" data-action="save-observacao">💾 Salvar observação</button>' +
+  '</div>';
+
   return renderTopbar({ title: "Pedido " + escapeHtml(p.numero || p.id), sub: "criado por " + escapeHtml(p.criadoPor || "—") + " em " + formatDateTime(p.criadoEm), back: "go-home" }) +
-    '<main>' + tipoSelectorHtml + stagesHtml + '</main>' +
+    '<main>' + tipoSelectorHtml + stagesHtml + obsHtml + '</main>' +
     hiddenFileInputs();
 }
 
@@ -1197,6 +1222,7 @@ function renderAdmin(user) {
             (thumbs ? '<div class="photogrid">' + thumbs + '</div>' : '') +
           '</div>';
         }).join("") +
+        (p.observacao ? '<div style="margin-top:12px;padding:10px 12px;background:var(--warn-bg);border-radius:10px;font-size:13px;color:var(--text);">📝 <b>Observação:</b> ' + escapeHtml(p.observacao) + '</div>' : '') +
         '<button class="btn danger" style="margin-top:14px;" data-action="delete-pedido" data-id="' + escapeHtml(p.id) + '">🗑 Excluir pedido</button>' +
         '<button class="btn secondary" style="margin-top:10px;" data-action="open-pedido" data-id="' + escapeHtml(p.id) + '">Abrir tela do pedido</button>' +
       '</div>';
@@ -1204,7 +1230,7 @@ function renderAdmin(user) {
     return '<div class="adm-row">' +
       '<div class="adm-head" data-action="toggle-adm-row" data-id="' + escapeHtml(p.id) + '">' +
         '<div class="info" style="flex:1;">' +
-          '<div class="num">' + info.icon + ' Pedido ' + escapeHtml(p.numero || p.id) + '</div>' +
+          '<div class="num">' + info.icon + ' Pedido ' + escapeHtml(p.numero || p.id) + (p.observacao ? ' <span title="Tem observação">📝</span>' : '') + '</div>' +
           '<div class="meta">' + escapeHtml(p.criadoPor || "") + ' · ' + formatDateTime(p.criadoEm) + '</div>' +
           '<div class="dots">' + dots + '</div>' +
         '</div>' +
@@ -1345,6 +1371,9 @@ document.addEventListener("click", function (e) {
       danger: true,
       onConfirm: function () { removePendingItem(pid); }
     });
+  } else if (action === "save-observacao") {
+    const obsEl = document.getElementById("obs-input");
+    setObservacao(obsEl ? obsEl.value : "");
   }
 });
 
@@ -1369,5 +1398,10 @@ document.addEventListener("input", function (e) {
     render();
     const el = document.getElementById("adm-search");
     if (el) { el.focus(); el.selectionStart = el.selectionEnd = el.value.length; }
+  } else if (e.target && e.target.id === "obs-input") {
+    // Guarda o rascunho sem re-renderizar: assim, se chegar uma atualização
+    // do pedido em tempo real (outra pessoa mexendo nele) enquanto a pessoa
+    // ainda está digitando, o texto digitado não se perde.
+    state.obsDraft = e.target.value;
   }
 });
