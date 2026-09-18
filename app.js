@@ -71,11 +71,15 @@ let state = {
   homeTipoFilter: "todos",
   admList: [],
   admOpenId: null,
-  admFilter: ""
+  admFilter: "",
+  pendingFotos: [],
+  pendingTotal: 0
 };
 let unsubHome = null;
 let unsubPedido = null;
 let unsubAdm = null;
+let pendingObjectUrls = {};
+let queueFlushing = false;
 
 function getCurrentUser() {
   try { return localStorage.getItem("cp_user") || null; } catch (e) { return null; }
@@ -107,7 +111,23 @@ window.addEventListener("hashchange", handleRoute);
 window.addEventListener("DOMContentLoaded", function () {
   handleRoute();
   registerServiceWorker();
+  refreshPendingTotal();
+  flushQueue();
 });
+
+// Fila de envio offline: tenta enviar assim que a conexão volta, e também
+// de tempos em tempos (o evento "online" nem sempre dispara em celulares
+// ao voltar de segundo plano).
+window.addEventListener("online", function () {
+  render();
+  flushQueue();
+});
+window.addEventListener("offline", function () {
+  render();
+});
+setInterval(function () {
+  if (navigator.onLine) flushQueue();
+}, 25000);
 
 function handleRoute() {
   const hash = location.hash || "#/login";
@@ -145,6 +165,8 @@ function teardownListeners() {
 }
 function teardownPedidoListener() {
   if (unsubPedido) { unsubPedido(); unsubPedido = null; }
+  revokePendingUrls();
+  state.pendingFotos = [];
 }
 
 /* ---------------------------------------------------------------------
@@ -285,6 +307,150 @@ function mapLink(loc) {
 }
 
 /* ---------------------------------------------------------------------
+   Fila de envio offline
+   Quando não há internet (ou o envio falha), a foto/vídeo já comprimido
+   fica guardado no aparelho (IndexedDB) em vez de ser perdido. Assim que
+   a conexão voltar, o app envia tudo sozinho, sem precisar tirar a foto
+   de novo.
+   --------------------------------------------------------------------- */
+const OFFLINE_DB_NAME = "cp_fila_offline";
+const OFFLINE_DB_VERSION = 1;
+const OFFLINE_STORE = "fila";
+
+function newLocalId() {
+  return "p" + Date.now() + "_" + Math.random().toString(36).slice(2, 10);
+}
+
+function idbOpen() {
+  return new Promise(function (resolve, reject) {
+    if (!("indexedDB" in window)) { reject(new Error("IndexedDB indisponível")); return; }
+    const req = indexedDB.open(OFFLINE_DB_NAME, OFFLINE_DB_VERSION);
+    req.onupgradeneeded = function () {
+      const dbx = req.result;
+      if (!dbx.objectStoreNames.contains(OFFLINE_STORE)) {
+        dbx.createObjectStore(OFFLINE_STORE, { keyPath: "id" });
+      }
+    };
+    req.onsuccess = function () { resolve(req.result); };
+    req.onerror = function () { reject(req.error); };
+  });
+}
+function idbAdd(item) {
+  return idbOpen().then(function (dbx) {
+    return new Promise(function (resolve, reject) {
+      const tx = dbx.transaction(OFFLINE_STORE, "readwrite");
+      tx.objectStore(OFFLINE_STORE).add(item);
+      tx.oncomplete = function () { resolve(); };
+      tx.onerror = function () { reject(tx.error); };
+    });
+  });
+}
+function idbGetAll() {
+  return idbOpen().then(function (dbx) {
+    return new Promise(function (resolve, reject) {
+      const tx = dbx.transaction(OFFLINE_STORE, "readonly");
+      const req = tx.objectStore(OFFLINE_STORE).getAll();
+      req.onsuccess = function () { resolve(req.result || []); };
+      req.onerror = function () { reject(req.error); };
+    });
+  });
+}
+function idbDelete(id) {
+  return idbOpen().then(function (dbx) {
+    return new Promise(function (resolve, reject) {
+      const tx = dbx.transaction(OFFLINE_STORE, "readwrite");
+      tx.objectStore(OFFLINE_STORE).delete(id);
+      tx.oncomplete = function () { resolve(); };
+      tx.onerror = function () { reject(tx.error); };
+    });
+  });
+}
+
+function revokePendingUrls() {
+  Object.keys(pendingObjectUrls).forEach(function (k) {
+    try { URL.revokeObjectURL(pendingObjectUrls[k]); } catch (e) {}
+  });
+  pendingObjectUrls = {};
+}
+
+function refreshPendingTotal() {
+  idbGetAll().then(function (items) {
+    state.pendingTotal = items.length;
+    render();
+  }).catch(function () {});
+}
+
+function refreshPendingForPedido(pedidoId) {
+  idbGetAll().then(function (items) {
+    state.pendingTotal = items.length;
+    const meus = items.filter(function (it) { return it.pedidoId === pedidoId; });
+    revokePendingUrls();
+    meus.forEach(function (it) {
+      try { pendingObjectUrls[it.id] = URL.createObjectURL(it.blob); } catch (e) {}
+    });
+    state.pendingFotos = meus;
+    render();
+  }).catch(function () {});
+}
+
+function queueOffline(meta) {
+  return idbAdd(meta).then(function () {
+    if (meta.pedidoId === state.pedidoId) {
+      refreshPendingForPedido(meta.pedidoId);
+    } else {
+      refreshPendingTotal();
+    }
+  });
+}
+
+function removePendingItem(id) {
+  idbDelete(id).then(function () {
+    showToast("Envio cancelado.");
+    refreshPendingTotal();
+    if (state.pedidoId) refreshPendingForPedido(state.pedidoId);
+  }).catch(function (e) {
+    console.error(e);
+    showToast("Erro ao cancelar.");
+  });
+}
+
+function flushQueue() {
+  if (queueFlushing || !navigator.onLine) return;
+  queueFlushing = true;
+  idbGetAll().then(function (items) {
+    if (!items.length) { queueFlushing = false; return; }
+    let idx = 0;
+    let sentCount = 0;
+    function step() {
+      if (idx >= items.length || !navigator.onLine) {
+        queueFlushing = false;
+        refreshPendingTotal();
+        if (state.pedidoId) refreshPendingForPedido(state.pedidoId);
+        if (sentCount > 0) {
+          showToast(sentCount === 1 ? "1 item pendente enviado ✓" : sentCount + " itens pendentes enviados ✓", 2400);
+        }
+        return;
+      }
+      const meta = items[idx];
+      idx++;
+      sendToServer(meta).then(function () {
+        return idbDelete(meta.id);
+      }).then(function () {
+        sentCount++;
+        step();
+      }).catch(function (e) {
+        console.error("Falha ao sincronizar item pendente:", e);
+        step();
+      });
+    }
+    step();
+  }).catch(function (e) {
+    console.error(e);
+    queueFlushing = false;
+  });
+}
+
+/* ---------------------------------------------------------------------
    Firestore: pedidos
    --------------------------------------------------------------------- */
 function watchHome() {
@@ -354,6 +520,8 @@ function openPedido(rawId) {
     console.error(err);
     showToast("Erro de conexão com o pedido.");
   });
+
+  refreshPendingForPedido(id);
 }
 
 function createOrOpenFromSearch(raw) {
@@ -370,12 +538,28 @@ function videoExt(type) {
   return "mp4";
 }
 
+function sendToServer(meta) {
+  const path = "pedidos/" + meta.pedidoId + "/" + meta.etapa + "/" + meta.criadoEm + "_" + meta.id + "." + meta.ext;
+  const ref = storage.ref().child(path);
+  return ref.put(meta.blob, { contentType: meta.contentType }).then(function () {
+    return ref.getDownloadURL();
+  }).then(function (url) {
+    const fotoObj = { path: path, url: url, usuario: meta.usuario, criadoEm: meta.criadoEm, tipo: meta.tipo };
+    if (meta.localizacao) fotoObj.localizacao = meta.localizacao;
+    else if (meta.semLocalizacao) fotoObj.semLocalizacao = true;
+    return db.collection("pedidos").doc(meta.pedidoId).update({
+      ["etapas." + meta.etapa + ".fotos"]: firebase.firestore.FieldValue.arrayUnion(fotoObj),
+      atualizadoEm: Date.now()
+    });
+  });
+}
+
 function uploadFotos(etapa, fileList) {
   const id = state.pedidoId;
   const user = getCurrentUser();
   const files = Array.prototype.slice.call(fileList || []);
   if (!files.length) return;
-  if (!authReady) { showToast("Ainda conectando ao servidor, aguarde um instante."); return; }
+  if (!authReady && navigator.onLine) { showToast("Ainda conectando ao servidor, aguarde um instante."); return; }
 
   const MAX_VIDEO_MB = 50;
 
@@ -390,41 +574,56 @@ function uploadFotos(etapa, fileList) {
       next();
       return;
     }
-    showToast((isVideo ? "Enviando vídeo" : "Enviando foto") + (files.length > 1 ? " (" + i + "/" + files.length + ")" : "") + "...", 9000);
     const wantsLocation = etapa === "descarregamento";
-    let gotLoc = null;
+    const offlineNow = !navigator.onLine;
+    if (!offlineNow) {
+      showToast((isVideo ? "Enviando vídeo" : "Enviando foto") + (files.length > 1 ? " (" + i + "/" + files.length + ")" : "") + "...", 9000);
+    }
     Promise.all([
       isVideo ? Promise.resolve(file) : compressImage(file),
       wantsLocation ? captureLocation() : Promise.resolve(null)
     ]).then(function (results) {
       const blob = results[0];
-      gotLoc = results[1];
+      const gotLoc = results[1];
       const ext = isVideo ? videoExt(file.type) : "jpg";
-      const path = "pedidos/" + id + "/" + etapa + "/" + Date.now() + "_" + Math.random().toString(36).slice(2, 8) + "." + ext;
-      const ref = storage.ref().child(path);
       const contentType = isVideo ? (file.type || "video/mp4") : "image/jpeg";
-      return ref.put(blob, { contentType: contentType }).then(function () {
-        return ref.getDownloadURL();
-      }).then(function (url) {
-        const fotoObj = { path: path, url: url, usuario: user, criadoEm: Date.now(), tipo: isVideo ? "video" : "foto" };
-        if (gotLoc) fotoObj.localizacao = gotLoc;
-        else if (wantsLocation) fotoObj.semLocalizacao = true;
-        return db.collection("pedidos").doc(id).update({
-          ["etapas." + etapa + ".fotos"]: firebase.firestore.FieldValue.arrayUnion(fotoObj),
-          atualizadoEm: Date.now()
+      const meta = {
+        id: newLocalId(),
+        pedidoId: id,
+        etapa: etapa,
+        usuario: user,
+        criadoEm: Date.now(),
+        tipo: isVideo ? "video" : "foto",
+        ext: ext,
+        contentType: contentType,
+        blob: blob
+      };
+      if (gotLoc) meta.localizacao = gotLoc;
+      else if (wantsLocation) meta.semLocalizacao = true;
+
+      if (offlineNow) {
+        return queueOffline(meta).then(function () {
+          showToast("📡 Sem conexão — " + (isVideo ? "vídeo" : "foto") + " salvo(a) no aparelho, será enviado(a) automaticamente ao voltar a internet.", 4000);
+        });
+      }
+      return sendToServer(meta).then(function () {
+        const label = isVideo ? "Vídeo registrado" : "Foto registrada";
+        if (wantsLocation && !gotLoc) {
+          showToast(label + " ✓ (sem localização — verifique a permissão de GPS)", 3200);
+        } else {
+          showToast(label + " ✓", 1400);
+        }
+      }).catch(function (e) {
+        console.error(e);
+        return queueOffline(meta).then(function () {
+          showToast("📡 Falha na conexão — " + (isVideo ? "vídeo" : "foto") + " salvo(a) no aparelho, será enviado(a) automaticamente.", 4000);
         });
       });
     }).then(function () {
-      const label = isVideo ? "Vídeo registrado" : "Foto registrada";
-      if (wantsLocation && !gotLoc) {
-        showToast(label + " ✓ (sem localização — verifique a permissão de GPS)", 3200);
-      } else {
-        showToast(label + " ✓", 1400);
-      }
       next();
     }).catch(function (e) {
       console.error(e);
-      showToast("Falha ao enviar. Tente novamente.");
+      showToast("Falha ao processar o arquivo. Tente novamente.");
       next();
     });
   }
@@ -722,14 +921,30 @@ function render() {
     app.innerHTML = renderLogin();
     return;
   }
+  let html = renderConnBar();
   if (state.route === "pedido") {
-    app.innerHTML = renderPedido(user);
+    html += renderPedido(user);
   } else if (state.route === "admin") {
-    app.innerHTML = renderAdmin(user);
+    html += renderAdmin(user);
   } else {
-    app.innerHTML = renderHome(user);
+    html += renderHome(user);
   }
+  app.innerHTML = html;
   bindFileInputs();
+}
+
+function renderConnBar() {
+  if (!navigator.onLine) {
+    return '<div class="connbar">📡 Sem conexão — as fotos/vídeos tirados agora ficam salvos no aparelho' +
+      (state.pendingTotal ? " (" + state.pendingTotal + " aguardando)" : "") +
+      ' e são enviados automaticamente quando a internet voltar.</div>';
+  }
+  if (state.pendingTotal > 0) {
+    return '<div class="connbar online" data-action="flush-queue">🔄 Enviando ' + state.pendingTotal +
+      (state.pendingTotal === 1 ? " item pendente" : " itens pendentes") +
+      '… toque para tentar agora</div>';
+  }
+  return "";
 }
 
 function renderConfigError() {
@@ -855,7 +1070,8 @@ function renderPedido(user) {
     const dispensado = s.key === "descarregamento" && !!etapa.dispensado;
     const done = fotos.length > 0 || dispensado;
     const last = fotos.length ? fotos[fotos.length - 1] : null;
-    const badgeLabel = fotos.length > 0 ? "Concluído" : (dispensado ? "Sem entrega" : "Pendente");
+    const pendentesEtapa = (state.pendingFotos || []).filter(function (it) { return it.etapa === s.key; });
+    const badgeLabel = fotos.length > 0 ? "Concluído" : (dispensado ? "Sem entrega" : (pendentesEtapa.length ? "Aguardando envio" : "Pendente"));
 
     const grid = fotos.map(function (f, idx) {
       const locHtml = f.localizacao
@@ -870,6 +1086,21 @@ function renderPedido(user) {
         mediaHtml +
         '<button class="rm" data-action="remove-photo" data-etapa="' + s.key + '" data-idx="' + idx + '" title="Corrigir foto">✕</button>' +
         '<div class="tag">' + escapeHtml(f.usuario) + '<br>' + formatDateTime(f.criadoEm) + (locHtml ? '<br>' + locHtml : '') + '</div>' +
+      '</div>';
+    }).join("");
+
+    const pendingGrid = pendentesEtapa.map(function (it) {
+      const url = pendingObjectUrls[it.id] || "";
+      const isVideoP = it.tipo === "video";
+      const mediaHtmlP = isVideoP
+        ? '<video src="' + escapeHtml(url) + '" preload="metadata" muted playsinline data-action="view-photo" data-url="' + escapeHtml(url) + '" data-type="video"></video>' +
+          '<div class="play-badge">▶</div>'
+        : '<img src="' + escapeHtml(url) + '" data-action="view-photo" data-url="' + escapeHtml(url) + '" data-type="foto">';
+      return '<div class="photothumb pending">' +
+        '<span class="pending-badge">⏳ aguardando</span>' +
+        mediaHtmlP +
+        '<button class="rm" data-action="remove-pending" data-id="' + escapeHtml(it.id) + '" title="Cancelar envio">✕</button>' +
+        '<div class="tag">' + escapeHtml(it.usuario) + '<br>' + formatDateTime(it.criadoEm) + '<br>📡 salvo(a) no aparelho</div>' +
       '</div>';
     }).join("");
 
@@ -892,7 +1123,7 @@ function renderPedido(user) {
         '<span class="badge ' + (done ? "concluido" : "pendente") + '">' + badgeLabel + '</span>' +
       '</div>' +
       (last ? '<div class="meta" style="color:var(--muted);font-size:12px;margin:-6px 0 12px 0;">Último registro: ' + escapeHtml(last.usuario) + ' em ' + formatDateTime(last.criadoEm) + '</div>' : '') +
-      (grid ? '<div class="photogrid">' + grid + '</div>' : '') +
+      ((grid || pendingGrid) ? '<div class="photogrid">' + grid + pendingGrid + '</div>' : '') +
       (dispensado ? '' : '<button class="camerabtn" data-action="take-photo" data-etapa="' + s.key + '">📷 Foto ou vídeo</button>') +
       dispensarHtml +
     '</div>';
@@ -1098,6 +1329,22 @@ document.addEventListener("click", function (e) {
     openLightbox(el.getAttribute("data-url"), el.getAttribute("data-type"));
   } else if (action === "close-lightbox") {
     closeLightbox();
+  } else if (action === "flush-queue") {
+    if (!navigator.onLine) {
+      showToast("Ainda sem conexão.");
+    } else {
+      showToast("Tentando enviar…", 1500);
+      flushQueue();
+    }
+  } else if (action === "remove-pending") {
+    const pid = el.getAttribute("data-id");
+    askConfirm({
+      title: "Cancelar envio",
+      text: "Esta foto/vídeo salvo no aparelho será apagado e não será enviado. Continuar?",
+      confirmLabel: "Cancelar envio",
+      danger: true,
+      onConfirm: function () { removePendingItem(pid); }
+    });
   }
 });
 
