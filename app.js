@@ -491,21 +491,169 @@ function closeConfirm() {
    --------------------------------------------------------------------- */
 function openLightbox(url, type) {
   if (!url) return;
+  const isVideo = type === "video";
   const bg = document.createElement("div");
   bg.className = "lightbox-bg";
   bg.id = "photo-lightbox";
   bg.setAttribute("data-action", "close-lightbox");
-  const mediaHtml = type === "video"
+  const mediaHtml = isVideo
     ? '<video class="lightbox-img" src="' + escapeHtml(url) + '" controls autoplay playsinline onclick="event.stopPropagation()"></video>'
-    : '<img class="lightbox-img" src="' + escapeHtml(url) + '">';
+    : '<img class="lightbox-img" src="' + escapeHtml(url) + '" draggable="false">';
   bg.innerHTML =
     '<button class="lightbox-close" data-action="close-lightbox" title="Fechar">✕</button>' +
-    mediaHtml;
+    mediaHtml +
+    (isVideo ? "" : '<div class="lightbox-hint">Belisque ou dê dois toques para ampliar</div>');
   document.body.appendChild(bg);
+  if (!isVideo) {
+    const img = bg.querySelector(".lightbox-img");
+    if (img) setupLightboxZoom(img);
+  }
 }
 function closeLightbox() {
   const m = document.getElementById("photo-lightbox");
   if (m) m.remove();
+}
+
+/* ---------------------------------------------------------------------
+   Zoom da foto no lightbox (pinça com dois dedos, duplo toque,
+   scroll do mouse e arraste quando ampliada)
+   --------------------------------------------------------------------- */
+function setupLightboxZoom(img) {
+  const MIN_SCALE = 1;
+  const MAX_SCALE = 4;
+  const ZOOM_TAP_SCALE = 2.6;
+  let scale = 1, tx = 0, ty = 0;
+  let pinchStartDist = 0, pinchStartScale = 1;
+  let panning = false, panStartX = 0, panStartY = 0, panStartTx = 0, panStartTy = 0;
+  let startTouches = 0, moved = false;
+  let lastTapTime = 0, lastTapX = 0, lastTapY = 0;
+  let mouseDown = false;
+
+  function apply() {
+    img.style.transform = "translate(" + tx + "px," + ty + "px) scale(" + scale + ")";
+    img.style.cursor = scale > 1 ? "grab" : "zoom-out";
+  }
+  function clampScale(s) {
+    return Math.max(MIN_SCALE, Math.min(MAX_SCALE, s));
+  }
+  function resetZoom() {
+    scale = 1; tx = 0; ty = 0;
+    apply();
+  }
+  function toggleZoomAt(clientX, clientY) {
+    if (scale > 1) {
+      resetZoom();
+      return;
+    }
+    const rect = img.getBoundingClientRect();
+    const offsetX = clientX - (rect.left + rect.width / 2);
+    const offsetY = clientY - (rect.top + rect.height / 2);
+    scale = ZOOM_TAP_SCALE;
+    tx = -offsetX * (scale - 1) / scale;
+    ty = -offsetY * (scale - 1) / scale;
+    apply();
+  }
+  function touchDist(t0, t1) {
+    const dx = t0.clientX - t1.clientX;
+    const dy = t0.clientY - t1.clientY;
+    return Math.sqrt(dx * dx + dy * dy);
+  }
+
+  img.addEventListener("touchstart", function (e) {
+    startTouches = e.touches.length;
+    moved = false;
+    if (e.touches.length === 2) {
+      pinchStartDist = touchDist(e.touches[0], e.touches[1]);
+      pinchStartScale = scale;
+      panning = false;
+    } else if (e.touches.length === 1 && scale > 1) {
+      panning = true;
+      panStartX = e.touches[0].clientX;
+      panStartY = e.touches[0].clientY;
+      panStartTx = tx;
+      panStartTy = ty;
+    }
+  }, { passive: true });
+
+  img.addEventListener("touchmove", function (e) {
+    if (e.touches.length === 2) {
+      e.preventDefault();
+      moved = true;
+      const d = touchDist(e.touches[0], e.touches[1]);
+      if (pinchStartDist > 0) {
+        scale = clampScale(pinchStartScale * (d / pinchStartDist));
+        apply();
+      }
+    } else if (e.touches.length === 1 && panning) {
+      e.preventDefault();
+      moved = true;
+      tx = panStartTx + (e.touches[0].clientX - panStartX);
+      ty = panStartTy + (e.touches[0].clientY - panStartY);
+      apply();
+    }
+  }, { passive: false });
+
+  img.addEventListener("touchend", function (e) {
+    panning = false;
+    if (e.touches.length > 0) return;
+    if (scale < 1.02) { scale = 1; tx = 0; ty = 0; apply(); }
+    if (startTouches === 1 && !moved && e.changedTouches.length) {
+      const t = e.changedTouches[0];
+      const now = Date.now();
+      const dx = t.clientX - lastTapX, dy = t.clientY - lastTapY;
+      if (now - lastTapTime < 320 && Math.sqrt(dx * dx + dy * dy) < 30) {
+        lastTapTime = 0;
+        toggleZoomAt(t.clientX, t.clientY);
+      } else {
+        lastTapTime = now;
+        lastTapX = t.clientX;
+        lastTapY = t.clientY;
+      }
+    }
+  });
+
+  img.addEventListener("dblclick", function (e) {
+    e.preventDefault();
+    toggleZoomAt(e.clientX, e.clientY);
+  });
+
+  img.addEventListener("wheel", function (e) {
+    e.preventDefault();
+    const delta = -e.deltaY * 0.0018;
+    const newScale = clampScale(scale + delta * scale);
+    const rect = img.getBoundingClientRect();
+    const offsetX = e.clientX - (rect.left + rect.width / 2);
+    const offsetY = e.clientY - (rect.top + rect.height / 2);
+    const ratio = newScale / scale;
+    tx = offsetX - (offsetX - tx) * ratio;
+    ty = offsetY - (offsetY - ty) * ratio;
+    scale = newScale;
+    if (scale <= 1.001) { scale = 1; tx = 0; ty = 0; }
+    apply();
+  }, { passive: false });
+
+  img.addEventListener("mousedown", function (e) {
+    if (scale <= 1) return;
+    mouseDown = true;
+    panStartX = e.clientX; panStartY = e.clientY;
+    panStartTx = tx; panStartTy = ty;
+    e.preventDefault();
+  });
+  window.addEventListener("mousemove", function (e) {
+    if (!mouseDown) return;
+    tx = panStartTx + (e.clientX - panStartX);
+    ty = panStartTy + (e.clientY - panStartY);
+    apply();
+  });
+  window.addEventListener("mouseup", function () { mouseDown = false; });
+
+  img.addEventListener("click", function (e) {
+    if (scale > 1) {
+      e.stopPropagation();
+    }
+  });
+
+  apply();
 }
 
 /* ---------------------------------------------------------------------
