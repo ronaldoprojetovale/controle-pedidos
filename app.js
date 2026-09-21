@@ -30,8 +30,8 @@ const TIPOS_ENTREGA = [
 ];
 
 const CAMINHOES = [
-  { key: "1", label: "Entrega 01" },
-  { key: "2", label: "Entrega 02" }
+  { key: "1", label: "Entrega 01", icon: "🚚" },
+  { key: "2", label: "Entrega 02", icon: "🚐" }
 ];
 
 /* ---------------------------------------------------------------------
@@ -260,7 +260,7 @@ function caminhaoInfo(pedido) {
 function camBadgeHtml(pedido) {
   const info = caminhaoInfo(pedido);
   if (!info) return "";
-  return ' <span class="cam-tag cam' + info.key + '">🚚 ' + escapeHtml(info.label) + '</span>';
+  return ' <span class="cam-tag cam' + info.key + '">' + info.icon + ' ' + escapeHtml(info.label) + '</span>';
 }
 function stageCount(pedido) {
   const stages = stagesForPedido(pedido);
@@ -1098,7 +1098,7 @@ function renderHome(user) {
       '</div>' +
       '<div class="chips">' +
         camChip("todos", "Todos os caminhões") +
-        CAMINHOES.map(function (c) { return camChip(c.key, "🚚 " + c.label); }).join("") +
+        CAMINHOES.map(function (c) { return camChip(c.key, c.icon + " " + c.label); }).join("") +
         camChip("nenhum", "Sem caminhão") +
       '</div>' +
       rows +
@@ -1136,7 +1136,7 @@ function renderPedido(user) {
       '<div class="chips" style="margin-bottom:0;">' +
         '<button class="chip ' + (caminhaoAtual === "" ? "active" : "") + '" data-action="set-caminhao" data-caminhao="">Não definido</button>' +
         CAMINHOES.map(function (c) {
-          return '<button class="chip ' + (caminhaoAtual === c.key ? "active" : "") + '" data-action="set-caminhao" data-caminhao="' + c.key + '">🚚 ' + escapeHtml(c.label) + '</button>';
+          return '<button class="chip ' + (caminhaoAtual === c.key ? "active" : "") + '" data-action="set-caminhao" data-caminhao="' + c.key + '">' + c.icon + ' ' + escapeHtml(c.label) + '</button>';
         }).join("") +
       '</div>' +
     '</div>'
