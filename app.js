@@ -75,6 +75,7 @@ let state = {
   homeFilter: "todos",
   homeTipoFilter: "todos",
   homeCaminhaoFilter: "todos",
+  homeConferidoFilter: "todos",
   admList: [],
   admOpenId: null,
   admFilter: "",
@@ -261,6 +262,10 @@ function camBadgeHtml(pedido) {
   const info = caminhaoInfo(pedido);
   if (!info) return "";
   return ' <span class="cam-tag cam' + info.key + '">' + info.icon + ' ' + escapeHtml(info.label) + '</span>';
+}
+function confBadgeHtml(pedido) {
+  if (!pedido || !pedido.conferido) return "";
+  return ' <span class="cam-tag conf-tag">✅ Conferido</span>';
 }
 function stageCount(pedido) {
   const stages = stagesForPedido(pedido);
@@ -701,6 +706,28 @@ function setCaminhao(valor) {
   });
 }
 
+function setConferido(value) {
+  const id = state.pedidoId;
+  const user = getCurrentUser();
+  if (user !== ADMIN_USER) return;
+  const update = { atualizadoEm: Date.now() };
+  if (value) {
+    update.conferido = true;
+    update.conferidoPor = user;
+    update.conferidoEm = Date.now();
+  } else {
+    update.conferido = false;
+    update.conferidoPor = firebase.firestore.FieldValue.delete();
+    update.conferidoEm = firebase.firestore.FieldValue.delete();
+  }
+  db.collection("pedidos").doc(id).update(update).then(function () {
+    showToast(value ? "Pedido marcado como conferido ✓" : "Marcação de conferido removida.", 1800);
+  }).catch(function (e) {
+    console.error(e);
+    showToast("Erro ao atualizar a conferência do pedido.");
+  });
+}
+
 function setObservacao(texto) {
   const id = state.pedidoId;
   const valor = (texto || "").trim();
@@ -1047,12 +1074,15 @@ function renderHome(user) {
   const filter = state.homeFilter;
   const tipoFilter = state.homeTipoFilter || "todos";
   const camFilter = state.homeCaminhaoFilter || "todos";
+  const confFilter = state.homeConferidoFilter || "todos";
   let list = state.homeList.slice();
   if (filter === "pendentes") list = list.filter(function (p) { return !pedidoConcluido(p); });
   if (filter === "concluidos") list = list.filter(function (p) { return pedidoConcluido(p); });
   if (tipoFilter !== "todos") list = list.filter(function (p) { return tipoEntregaOf(p) === tipoFilter; });
   if (camFilter === "1" || camFilter === "2") list = list.filter(function (p) { return p.caminhao === camFilter; });
   else if (camFilter === "nenhum") list = list.filter(function (p) { return !p.caminhao; });
+  if (confFilter === "sim") list = list.filter(function (p) { return !!p.conferido; });
+  else if (confFilter === "nao") list = list.filter(function (p) { return !p.conferido; });
 
   let rows = list.map(function (p) {
     const stages = stagesForPedido(p);
@@ -1065,6 +1095,7 @@ function renderHome(user) {
         '<div class="num-row">' +
           '<div class="num">' + info.icon + ' Pedido ' + escapeHtml(p.numero || p.id) + '</div>' +
           camBadgeHtml(p) +
+          confBadgeHtml(p) +
           (p.observacao ? ' <span title="Tem observação">📝</span>' : '') +
         '</div>' +
         '<div class="meta">' + escapeHtml(p.criadoPor || "") + ' · atualizado ' + timeAgo(p.atualizadoEm) + '</div>' +
@@ -1101,6 +1132,11 @@ function renderHome(user) {
         CAMINHOES.map(function (c) { return camChip(c.key, c.icon + " " + c.label); }).join("") +
         camChip("nenhum", "Sem caminhão") +
       '</div>' +
+      '<div class="chips">' +
+        confChip("todos", "Todos") +
+        confChip("sim", "✅ Conferidos") +
+        confChip("nao", "Não conferidos") +
+      '</div>' +
       rows +
     '</main>';
 
@@ -1112,6 +1148,9 @@ function renderHome(user) {
   }
   function camChip(key, label) {
     return '<button class="chip ' + (camFilter === key ? "active" : "") + '" data-action="filter-caminhao" data-caminhao="' + key + '">' + label + '</button>';
+  }
+  function confChip(key, label) {
+    return '<button class="chip ' + (confFilter === key ? "active" : "") + '" data-action="filter-conferido" data-conferido="' + key + '">' + label + '</button>';
   }
 }
 
@@ -1139,6 +1178,18 @@ function renderPedido(user) {
           return '<button class="chip ' + (caminhaoAtual === c.key ? "active" : "") + '" data-action="set-caminhao" data-caminhao="' + c.key + '">' + c.icon + ' ' + escapeHtml(c.label) + '</button>';
         }).join("") +
       '</div>' +
+    '</div>'
+  ) : "";
+  const conferenciaHtml = user === ADMIN_USER ? (
+    '<div class="card" style="padding:12px 14px;">' +
+      '<div style="font-size:12px;color:var(--muted);font-weight:600;margin-bottom:8px;">Conferência (somente ADM)</div>' +
+      (p.conferido
+        ? '<div class="meta" style="color:var(--muted);font-size:12.5px;margin-bottom:10px;">✅ Conferido' +
+            (p.conferidoPor ? ' por ' + escapeHtml(p.conferidoPor) : '') +
+            (p.conferidoEm ? ' em ' + formatDateTime(p.conferidoEm) : '') + '</div>' +
+          '<button class="btn secondary" data-action="toggle-conferido" data-valor="0">Desfazer conferência</button>'
+        : '<button class="btn secondary" data-action="toggle-conferido" data-valor="1">✅ Marcar como conferido</button>'
+      ) +
     '</div>'
   ) : "";
   const stages = stagesForPedido(p);
@@ -1215,7 +1266,7 @@ function renderPedido(user) {
   '</div>';
 
   return renderTopbar({ title: "Pedido " + escapeHtml(p.numero || p.id), sub: "criado por " + escapeHtml(p.criadoPor || "—") + " em " + formatDateTime(p.criadoEm), back: "go-home" }) +
-    '<main>' + tipoSelectorHtml + caminhaoSelectorHtml + stagesHtml + obsHtml + '</main>' +
+    '<main>' + tipoSelectorHtml + caminhaoSelectorHtml + conferenciaHtml + stagesHtml + obsHtml + '</main>' +
     hiddenFileInputs();
 }
 
@@ -1282,7 +1333,7 @@ function renderAdmin(user) {
             (thumbs ? '<div class="photogrid">' + thumbs + '</div>' : '') +
           '</div>';
         }).join("") +
-        (caminhaoInfo(p) ? '<div style="margin-top:12px;">' + camBadgeHtml(p) + '</div>' : '') +
+        ((caminhaoInfo(p) || p.conferido) ? '<div style="margin-top:12px;">' + camBadgeHtml(p) + confBadgeHtml(p) + '</div>' : '') +
         (p.observacao ? '<div style="margin-top:12px;padding:10px 12px;background:var(--warn-bg);border-radius:10px;font-size:13px;color:var(--text);">📝 <b>Observação:</b> ' + escapeHtml(p.observacao) + '</div>' : '') +
         '<button class="btn danger" style="margin-top:14px;" data-action="delete-pedido" data-id="' + escapeHtml(p.id) + '">🗑 Excluir pedido</button>' +
         '<button class="btn secondary" style="margin-top:10px;" data-action="open-pedido" data-id="' + escapeHtml(p.id) + '">Abrir tela do pedido</button>' +
@@ -1294,6 +1345,7 @@ function renderAdmin(user) {
           '<div class="num-row">' +
             '<div class="num">' + info.icon + ' Pedido ' + escapeHtml(p.numero || p.id) + '</div>' +
             camBadgeHtml(p) +
+            confBadgeHtml(p) +
             (p.observacao ? ' <span title="Tem observação">📝</span>' : '') +
           '</div>' +
           '<div class="meta">' + escapeHtml(p.criadoPor || "") + ' · ' + formatDateTime(p.criadoEm) + '</div>' +
@@ -1355,8 +1407,13 @@ document.addEventListener("click", function (e) {
   } else if (action === "filter-caminhao") {
     state.homeCaminhaoFilter = el.getAttribute("data-caminhao");
     render();
+  } else if (action === "filter-conferido") {
+    state.homeConferidoFilter = el.getAttribute("data-conferido");
+    render();
   } else if (action === "set-caminhao") {
     setCaminhao(el.getAttribute("data-caminhao"));
+  } else if (action === "toggle-conferido") {
+    setConferido(el.getAttribute("data-valor") === "1");
   } else if (action === "set-tipo-entrega") {
     const novoTipo = el.getAttribute("data-tipo");
     const p = state.pedidoData;
