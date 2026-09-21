@@ -528,7 +528,7 @@ function openPedido(rawId) {
           criadoPor: getCurrentUser(),
           criadoEm: now,
           atualizadoEm: now,
-          tipoEntrega: "entrega",
+          tipoEntrega: "retirada",
           etapas: {
             separacao: { fotos: [] },
             carregamento: { fotos: [] },
@@ -765,7 +765,22 @@ function removeFoto(etapa, foto) {
   });
 }
 
-function deletePedido(id) {
+function setNumero(valor) {
+  const id = state.pedidoId;
+  const texto = (valor || "").trim();
+  if (!texto) { showToast("Digite um número válido."); return; }
+  db.collection("pedidos").doc(id).update({
+    numero: texto,
+    atualizadoEm: Date.now()
+  }).then(function () {
+    showToast("Número atualizado ✓", 1600);
+  }).catch(function (e) {
+    console.error(e);
+    showToast("Erro ao salvar o número.");
+  });
+}
+
+function deletePedido(id, goHomeAfter) {
   db.collection("pedidos").doc(id).get().then(function (docSnap) {
     if (!docSnap.exists) return;
     const data = docSnap.data();
@@ -779,6 +794,7 @@ function deletePedido(id) {
   }).then(function () {
     showToast("Pedido excluído.");
     if (state.admOpenId === id) state.admOpenId = null;
+    if (goHomeAfter) goTo("home");
   }).catch(function (e) {
     console.error(e);
     showToast("Erro ao excluir pedido.");
@@ -1199,6 +1215,17 @@ function renderPedido(user) {
       ) +
     '</div>'
   ) : "";
+  const admManageHtml = user === ADMIN_USER ? (
+    '<div class="card" style="padding:12px 14px;">' +
+      '<div style="font-size:12px;color:var(--muted);font-weight:600;margin-bottom:8px;">Gerenciar pedido (somente ADM)</div>' +
+      '<div class="field" style="margin-bottom:10px;">' +
+        '<label>Número do pedido</label>' +
+        '<input id="numero-input" type="text" value="' + escapeHtml(p.numero || p.id) + '">' +
+      '</div>' +
+      '<button class="btn secondary" data-action="save-numero">💾 Salvar número</button>' +
+      '<button class="btn danger" style="margin-top:10px;" data-action="delete-pedido" data-id="' + escapeHtml(p.id) + '" data-nav="home">🗑 Excluir pedido</button>' +
+    '</div>'
+  ) : "";
   const stages = stagesForPedido(p);
   const stagesHtml = stages.map(function (s) {
     const etapa = (p.etapas && p.etapas[s.key]) || { fotos: [] };
@@ -1273,7 +1300,7 @@ function renderPedido(user) {
   '</div>';
 
   return renderTopbar({ title: "Pedido " + escapeHtml(p.numero || p.id), sub: "criado por " + escapeHtml(p.criadoPor || "—") + " em " + formatDateTime(p.criadoEm), back: "go-home" }) +
-    '<main>' + tipoSelectorHtml + caminhaoSelectorHtml + conferenciaHtml + stagesHtml + obsHtml + '</main>' +
+    '<main>' + tipoSelectorHtml + caminhaoSelectorHtml + conferenciaHtml + admManageHtml + stagesHtml + obsHtml + '</main>' +
     hiddenFileInputs();
 }
 
@@ -1472,12 +1499,13 @@ document.addEventListener("click", function (e) {
     render();
   } else if (action === "delete-pedido") {
     const id = el.getAttribute("data-id");
+    const goHomeAfter = el.getAttribute("data-nav") === "home";
     askConfirm({
       title: "Excluir pedido",
       text: "Isso apaga o pedido " + id + " e todas as fotos dele. Essa ação não pode ser desfeita.",
       confirmLabel: "Excluir",
       danger: true,
-      onConfirm: function () { deletePedido(id); }
+      onConfirm: function () { deletePedido(id, goHomeAfter); }
     });
   } else if (action === "confirm-ok") {
     const cb = confirmCallback;
@@ -1508,6 +1536,9 @@ document.addEventListener("click", function (e) {
   } else if (action === "save-observacao") {
     const obsEl = document.getElementById("obs-input");
     setObservacao(obsEl ? obsEl.value : "");
+  } else if (action === "save-numero") {
+    const numEl = document.getElementById("numero-input");
+    setNumero(numEl ? numEl.value : "");
   }
 });
 
