@@ -1125,23 +1125,25 @@ function renderHome(user) {
         '<button type="submit">Abrir</button>' +
       '</form>' +
       admBtn +
-      '<div class="chips">' +
-        chip("todos", "Todos") + chip("pendentes", "Pendentes") + chip("concluidos", "Concluídos") +
-      '</div>' +
-      '<div class="chips">' +
-        tipoChip("todos", "Todos os tipos") +
-        TIPOS_ENTREGA.map(function (t) { return tipoChip(t.key, t.icon + " " + t.label); }).join("") +
-      '</div>' +
-      '<div class="chips">' +
-        camChip("todos", "Todos os caminhões") +
-        CAMINHOES.map(function (c) { return camChip(c.key, c.icon + " " + c.label); }).join("") +
-        camChip("nenhum", "Sem caminhão") +
-      '</div>' +
-      '<div class="chips">' +
-        confChip("todos", "Todos") +
-        confChip("sim", "✅ Conferidos") +
-        confChip("nao", "Não conferidos") +
-      '</div>' +
+      (user === ADMIN_USER ? (
+        '<div class="chips">' +
+          chip("todos", "Todos") + chip("pendentes", "Pendentes") + chip("concluidos", "Concluídos") +
+        '</div>' +
+        '<div class="chips">' +
+          tipoChip("todos", "Todos os tipos") +
+          TIPOS_ENTREGA.map(function (t) { return tipoChip(t.key, t.icon + " " + t.label); }).join("") +
+        '</div>' +
+        '<div class="chips">' +
+          camChip("todos", "Todos os caminhões") +
+          CAMINHOES.map(function (c) { return camChip(c.key, c.icon + " " + c.label); }).join("") +
+          camChip("nenhum", "Sem caminhão") +
+        '</div>' +
+        '<div class="chips">' +
+          confChip("todos", "Todos") +
+          confChip("sim", "✅ Conferidos") +
+          confChip("nao", "Não conferidos") +
+        '</div>'
+      ) : "") +
       rows +
     '</main>';
 
