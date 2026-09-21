@@ -29,6 +29,11 @@ const TIPOS_ENTREGA = [
   { key: "retirada", label: "Retirada na loja", icon: "🏬" }
 ];
 
+const CAMINHOES = [
+  { key: "1", label: "Entrega 01" },
+  { key: "2", label: "Entrega 02" }
+];
+
 /* ---------------------------------------------------------------------
    Firebase init
    --------------------------------------------------------------------- */
@@ -69,6 +74,7 @@ let state = {
   homeList: [],
   homeFilter: "todos",
   homeTipoFilter: "todos",
+  homeCaminhaoFilter: "todos",
   admList: [],
   admOpenId: null,
   admFilter: "",
@@ -242,6 +248,19 @@ function tipoEntregaInfo(pedido) {
 }
 function stagesForPedido(pedido) {
   return tipoEntregaOf(pedido) === "retirada" ? STAGES.slice(0, 1) : STAGES;
+}
+function caminhaoInfo(pedido) {
+  const key = pedido && pedido.caminhao;
+  if (!key) return null;
+  for (let i = 0; i < CAMINHOES.length; i++) {
+    if (CAMINHOES[i].key === key) return CAMINHOES[i];
+  }
+  return null;
+}
+function camBadgeHtml(pedido) {
+  const info = caminhaoInfo(pedido);
+  if (!info) return "";
+  return ' <span class="cam-tag cam' + info.key + '">🚚 ' + escapeHtml(info.label) + '</span>';
 }
 function stageCount(pedido) {
   const stages = stagesForPedido(pedido);
@@ -668,6 +687,20 @@ function setTipoEntrega(tipo) {
   });
 }
 
+function setCaminhao(valor) {
+  const id = state.pedidoId;
+  db.collection("pedidos").doc(id).update({
+    caminhao: valor || "",
+    atualizadoEm: Date.now()
+  }).then(function () {
+    const info = CAMINHOES.filter(function (c) { return c.key === valor; })[0];
+    showToast(info ? "Caminhão: " + info.label + " ✓" : "Caminhão removido do pedido.", 1800);
+  }).catch(function (e) {
+    console.error(e);
+    showToast("Erro ao atualizar o caminhão do pedido.");
+  });
+}
+
 function setObservacao(texto) {
   const id = state.pedidoId;
   const valor = (texto || "").trim();
@@ -1013,10 +1046,13 @@ function renderTopbar(opts) {
 function renderHome(user) {
   const filter = state.homeFilter;
   const tipoFilter = state.homeTipoFilter || "todos";
+  const camFilter = state.homeCaminhaoFilter || "todos";
   let list = state.homeList.slice();
   if (filter === "pendentes") list = list.filter(function (p) { return !pedidoConcluido(p); });
   if (filter === "concluidos") list = list.filter(function (p) { return pedidoConcluido(p); });
   if (tipoFilter !== "todos") list = list.filter(function (p) { return tipoEntregaOf(p) === tipoFilter; });
+  if (camFilter === "1" || camFilter === "2") list = list.filter(function (p) { return p.caminhao === camFilter; });
+  else if (camFilter === "nenhum") list = list.filter(function (p) { return !p.caminhao; });
 
   let rows = list.map(function (p) {
     const stages = stagesForPedido(p);
@@ -1026,7 +1062,11 @@ function renderHome(user) {
     const info = tipoEntregaInfo(p);
     return '<div class="pedido-row" data-action="open-pedido" data-id="' + escapeHtml(p.id) + '">' +
       '<div class="info">' +
-        '<div class="num">' + info.icon + ' Pedido ' + escapeHtml(p.numero || p.id) + (p.observacao ? ' <span title="Tem observação">📝</span>' : '') + '</div>' +
+        '<div class="num-row">' +
+          '<div class="num">' + info.icon + ' Pedido ' + escapeHtml(p.numero || p.id) + '</div>' +
+          camBadgeHtml(p) +
+          (p.observacao ? ' <span title="Tem observação">📝</span>' : '') +
+        '</div>' +
         '<div class="meta">' + escapeHtml(p.criadoPor || "") + ' · atualizado ' + timeAgo(p.atualizadoEm) + '</div>' +
         '<div class="dots">' + dots + '</div>' +
       '</div>' +
@@ -1056,6 +1096,11 @@ function renderHome(user) {
         tipoChip("todos", "Todos os tipos") +
         TIPOS_ENTREGA.map(function (t) { return tipoChip(t.key, t.icon + " " + t.label); }).join("") +
       '</div>' +
+      '<div class="chips">' +
+        camChip("todos", "Todos os caminhões") +
+        CAMINHOES.map(function (c) { return camChip(c.key, "🚚 " + c.label); }).join("") +
+        camChip("nenhum", "Sem caminhão") +
+      '</div>' +
       rows +
     '</main>';
 
@@ -1064,6 +1109,9 @@ function renderHome(user) {
   }
   function tipoChip(key, label) {
     return '<button class="chip ' + (tipoFilter === key ? "active" : "") + '" data-action="filter-tipo" data-tipo="' + key + '">' + label + '</button>';
+  }
+  function camChip(key, label) {
+    return '<button class="chip ' + (camFilter === key ? "active" : "") + '" data-action="filter-caminhao" data-caminhao="' + key + '">' + label + '</button>';
   }
 }
 
@@ -1081,6 +1129,18 @@ function renderPedido(user) {
       }).join("") +
     '</div>' +
   '</div>';
+  const caminhaoAtual = p.caminhao || "";
+  const caminhaoSelectorHtml = tipoAtual === "entrega" ? (
+    '<div class="card" style="padding:12px 14px;">' +
+      '<div style="font-size:12px;color:var(--muted);font-weight:600;margin-bottom:8px;">Caminhão</div>' +
+      '<div class="chips" style="margin-bottom:0;">' +
+        '<button class="chip ' + (caminhaoAtual === "" ? "active" : "") + '" data-action="set-caminhao" data-caminhao="">Não definido</button>' +
+        CAMINHOES.map(function (c) {
+          return '<button class="chip ' + (caminhaoAtual === c.key ? "active" : "") + '" data-action="set-caminhao" data-caminhao="' + c.key + '">🚚 ' + escapeHtml(c.label) + '</button>';
+        }).join("") +
+      '</div>' +
+    '</div>'
+  ) : "";
   const stages = stagesForPedido(p);
   const stagesHtml = stages.map(function (s) {
     const etapa = (p.etapas && p.etapas[s.key]) || { fotos: [] };
@@ -1155,7 +1215,7 @@ function renderPedido(user) {
   '</div>';
 
   return renderTopbar({ title: "Pedido " + escapeHtml(p.numero || p.id), sub: "criado por " + escapeHtml(p.criadoPor || "—") + " em " + formatDateTime(p.criadoEm), back: "go-home" }) +
-    '<main>' + tipoSelectorHtml + stagesHtml + obsHtml + '</main>' +
+    '<main>' + tipoSelectorHtml + caminhaoSelectorHtml + stagesHtml + obsHtml + '</main>' +
     hiddenFileInputs();
 }
 
@@ -1222,6 +1282,7 @@ function renderAdmin(user) {
             (thumbs ? '<div class="photogrid">' + thumbs + '</div>' : '') +
           '</div>';
         }).join("") +
+        (caminhaoInfo(p) ? '<div style="margin-top:12px;">' + camBadgeHtml(p) + '</div>' : '') +
         (p.observacao ? '<div style="margin-top:12px;padding:10px 12px;background:var(--warn-bg);border-radius:10px;font-size:13px;color:var(--text);">📝 <b>Observação:</b> ' + escapeHtml(p.observacao) + '</div>' : '') +
         '<button class="btn danger" style="margin-top:14px;" data-action="delete-pedido" data-id="' + escapeHtml(p.id) + '">🗑 Excluir pedido</button>' +
         '<button class="btn secondary" style="margin-top:10px;" data-action="open-pedido" data-id="' + escapeHtml(p.id) + '">Abrir tela do pedido</button>' +
@@ -1230,7 +1291,11 @@ function renderAdmin(user) {
     return '<div class="adm-row">' +
       '<div class="adm-head" data-action="toggle-adm-row" data-id="' + escapeHtml(p.id) + '">' +
         '<div class="info" style="flex:1;">' +
-          '<div class="num">' + info.icon + ' Pedido ' + escapeHtml(p.numero || p.id) + (p.observacao ? ' <span title="Tem observação">📝</span>' : '') + '</div>' +
+          '<div class="num-row">' +
+            '<div class="num">' + info.icon + ' Pedido ' + escapeHtml(p.numero || p.id) + '</div>' +
+            camBadgeHtml(p) +
+            (p.observacao ? ' <span title="Tem observação">📝</span>' : '') +
+          '</div>' +
           '<div class="meta">' + escapeHtml(p.criadoPor || "") + ' · ' + formatDateTime(p.criadoEm) + '</div>' +
           '<div class="dots">' + dots + '</div>' +
         '</div>' +
@@ -1287,6 +1352,11 @@ document.addEventListener("click", function (e) {
   } else if (action === "filter-tipo") {
     state.homeTipoFilter = el.getAttribute("data-tipo");
     render();
+  } else if (action === "filter-caminhao") {
+    state.homeCaminhaoFilter = el.getAttribute("data-caminhao");
+    render();
+  } else if (action === "set-caminhao") {
+    setCaminhao(el.getAttribute("data-caminhao"));
   } else if (action === "set-tipo-entrega") {
     const novoTipo = el.getAttribute("data-tipo");
     const p = state.pedidoData;
