@@ -1223,7 +1223,9 @@ function renderPedido(user) {
         '<input id="numero-input" type="text" value="' + escapeHtml(p.numero || p.id) + '">' +
       '</div>' +
       '<button class="btn secondary" data-action="save-numero">💾 Salvar número</button>' +
-      '<button class="btn danger" style="margin-top:10px;" data-action="delete-pedido" data-id="' + escapeHtml(p.id) + '" data-nav="home">🗑 Excluir pedido</button>' +
+      '<div style="text-align:center;margin-top:14px;">' +
+        '<button class="btn danger" style="width:auto;padding:8px 16px;font-size:13px;" data-action="delete-pedido" data-id="' + escapeHtml(p.id) + '" data-nav="home">🗑 Excluir pedido</button>' +
+      '</div>' +
     '</div>'
   ) : "";
   const stages = stagesForPedido(p);
@@ -1369,8 +1371,10 @@ function renderAdmin(user) {
         }).join("") +
         ((caminhaoInfo(p) || p.conferido) ? '<div style="margin-top:12px;">' + camBadgeHtml(p) + confBadgeHtml(p) + '</div>' : '') +
         (p.observacao ? '<div style="margin-top:12px;padding:10px 12px;background:var(--warn-bg);border-radius:10px;font-size:13px;color:var(--text);">📝 <b>Observação:</b> ' + escapeHtml(p.observacao) + '</div>' : '') +
-        '<button class="btn danger" style="margin-top:14px;" data-action="delete-pedido" data-id="' + escapeHtml(p.id) + '">🗑 Excluir pedido</button>' +
-        '<button class="btn secondary" style="margin-top:10px;" data-action="open-pedido" data-id="' + escapeHtml(p.id) + '">Abrir tela do pedido</button>' +
+        '<button class="btn secondary" style="margin-top:14px;" data-action="open-pedido" data-id="' + escapeHtml(p.id) + '">Abrir tela do pedido</button>' +
+        '<div style="text-align:center;margin-top:14px;">' +
+          '<button class="btn danger" style="width:auto;padding:8px 16px;font-size:13px;" data-action="delete-pedido" data-id="' + escapeHtml(p.id) + '">🗑 Excluir pedido</button>' +
+        '</div>' +
       '</div>';
     }
     return '<div class="adm-row">' +
