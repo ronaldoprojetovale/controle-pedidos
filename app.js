@@ -711,8 +711,8 @@ function setCaminhao(valor) {
   });
 }
 
-function setConferido(value) {
-  const id = state.pedidoId;
+function setConferido(value, id) {
+  id = id || state.pedidoId;
   const user = getCurrentUser();
   if (user !== ADMIN_USER) return;
   const update = { atualizadoEm: Date.now() };
@@ -1371,7 +1371,8 @@ function renderAdmin(user) {
         }).join("") +
         ((caminhaoInfo(p) || p.conferido) ? '<div style="margin-top:12px;">' + camBadgeHtml(p) + confBadgeHtml(p) + '</div>' : '') +
         (p.observacao ? '<div style="margin-top:12px;padding:10px 12px;background:var(--warn-bg);border-radius:10px;font-size:13px;color:var(--text);">📝 <b>Observação:</b> ' + escapeHtml(p.observacao) + '</div>' : '') +
-        '<button class="btn secondary" style="margin-top:14px;" data-action="open-pedido" data-id="' + escapeHtml(p.id) + '">Abrir tela do pedido</button>' +
+        '<button class="btn secondary" style="margin-top:14px;" data-action="toggle-conferido" data-valor="' + (p.conferido ? "0" : "1") + '" data-id="' + escapeHtml(p.id) + '">' + (p.conferido ? "Desfazer conferência" : "✅ Marcar como conferido") + '</button>' +
+        '<button class="btn secondary" style="margin-top:10px;" data-action="open-pedido" data-id="' + escapeHtml(p.id) + '">Abrir tela do pedido</button>' +
         '<div style="text-align:center;margin-top:14px;">' +
           '<button class="btn danger" style="width:auto;padding:8px 16px;font-size:13px;" data-action="delete-pedido" data-id="' + escapeHtml(p.id) + '">🗑 Excluir pedido</button>' +
         '</div>' +
@@ -1451,7 +1452,7 @@ document.addEventListener("click", function (e) {
   } else if (action === "set-caminhao") {
     setCaminhao(el.getAttribute("data-caminhao"));
   } else if (action === "toggle-conferido") {
-    setConferido(el.getAttribute("data-valor") === "1");
+    setConferido(el.getAttribute("data-valor") === "1", el.getAttribute("data-id") || undefined);
   } else if (action === "set-tipo-entrega") {
     const novoTipo = el.getAttribute("data-tipo");
     const p = state.pedidoData;
