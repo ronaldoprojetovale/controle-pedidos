@@ -263,6 +263,11 @@ function camBadgeHtml(pedido) {
   if (!info) return "";
   return ' <span class="cam-tag cam' + info.key + '">' + info.icon + ' ' + escapeHtml(info.label) + '</span>';
 }
+function rowIconFor(pedido) {
+  const cam = caminhaoInfo(pedido);
+  if (cam && tipoEntregaOf(pedido) === "entrega") return cam.icon;
+  return tipoEntregaInfo(pedido).icon;
+}
 function confBadgeHtml(pedido) {
   if (!pedido || !pedido.conferido) return "";
   return ' <span class="cam-tag conf-tag">✅ Conferido</span>';
@@ -1089,11 +1094,11 @@ function renderHome(user) {
     const dots = stages.map(function (s) {
       return '<span class="dot ' + (stageDone(p, s.key) ? "on" : "") + '" title="' + escapeHtml(s.label) + '"></span>';
     }).join("");
-    const info = tipoEntregaInfo(p);
+    const rowIcon = rowIconFor(p);
     return '<div class="pedido-row" data-action="open-pedido" data-id="' + escapeHtml(p.id) + '">' +
       '<div class="info">' +
         '<div class="num-row">' +
-          '<div class="num">' + info.icon + ' Pedido ' + escapeHtml(p.numero || p.id) + '</div>' +
+          '<div class="num">' + rowIcon + ' Pedido ' + escapeHtml(p.numero || p.id) + '</div>' +
           camBadgeHtml(p) +
           confBadgeHtml(p) +
           (p.observacao ? ' <span title="Tem observação">📝</span>' : '') +
@@ -1305,7 +1310,7 @@ function renderAdmin(user) {
   const rows = list.map(function (p) {
     const open = state.admOpenId === p.id;
     const stages = stagesForPedido(p);
-    const info = tipoEntregaInfo(p);
+    const rowIcon = rowIconFor(p);
     const dots = stages.map(function (s) {
       return '<span class="dot ' + (stageDone(p, s.key) ? "on" : "") + '"></span>';
     }).join("");
@@ -1343,7 +1348,7 @@ function renderAdmin(user) {
       '<div class="adm-head" data-action="toggle-adm-row" data-id="' + escapeHtml(p.id) + '">' +
         '<div class="info" style="flex:1;">' +
           '<div class="num-row">' +
-            '<div class="num">' + info.icon + ' Pedido ' + escapeHtml(p.numero || p.id) + '</div>' +
+            '<div class="num">' + rowIcon + ' Pedido ' + escapeHtml(p.numero || p.id) + '</div>' +
             camBadgeHtml(p) +
             confBadgeHtml(p) +
             (p.observacao ? ' <span title="Tem observação">📝</span>' : '') +
