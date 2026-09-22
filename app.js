@@ -685,10 +685,15 @@ function setDispensado(value) {
 
 function setTipoEntrega(tipo) {
   const id = state.pedidoId;
-  db.collection("pedidos").doc(id).update({
+  const p = state.pedidoData;
+  const update = {
     tipoEntrega: tipo,
     atualizadoEm: Date.now()
-  }).then(function () {
+  };
+  if (tipo === "entrega" && !(p && p.caminhao)) {
+    update.caminhao = "1";
+  }
+  db.collection("pedidos").doc(id).update(update).then(function () {
     const info = TIPOS_ENTREGA.filter(function (t) { return t.key === tipo; })[0];
     showToast("Tipo do pedido: " + (info ? info.label : tipo) + " ✓", 1800);
   }).catch(function (e) {
@@ -1196,7 +1201,6 @@ function renderPedido(user) {
     '<div class="card" style="padding:12px 14px;">' +
       '<div style="font-size:12px;color:var(--muted);font-weight:600;margin-bottom:8px;">Caminhão</div>' +
       '<div class="chips" style="margin-bottom:0;">' +
-        '<button class="chip ' + (caminhaoAtual === "" ? "active" : "") + '" data-action="set-caminhao" data-caminhao="">Não definido</button>' +
         CAMINHOES.map(function (c) {
           return '<button class="chip ' + (caminhaoAtual === c.key ? "active" : "") + '" data-action="set-caminhao" data-caminhao="' + c.key + '">' + c.icon + ' ' + escapeHtml(c.label) + '</button>';
         }).join("") +
