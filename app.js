@@ -270,6 +270,9 @@ function rowIconFor(pedido) {
 }
 function confBadgeHtml(pedido) {
   if (!pedido || !pedido.conferido) return "";
+  if (pedido.conferidoNegativo) {
+    return ' <span class="cam-tag conf-tag-neg">❌ Fora do padrão</span>';
+  }
   return ' <span class="cam-tag conf-tag">✅ Conferido</span>';
 }
 function stageCount(pedido) {
@@ -716,7 +719,7 @@ function setCaminhao(valor) {
   });
 }
 
-function setConferido(value, id) {
+function setConferido(value, id, negativo) {
   id = id || state.pedidoId;
   const user = getCurrentUser();
   if (user !== ADMIN_USER) return;
@@ -725,13 +728,20 @@ function setConferido(value, id) {
     update.conferido = true;
     update.conferidoPor = user;
     update.conferidoEm = Date.now();
+    if (negativo) {
+      update.conferidoNegativo = true;
+    } else {
+      update.conferidoNegativo = firebase.firestore.FieldValue.delete();
+    }
   } else {
     update.conferido = false;
     update.conferidoPor = firebase.firestore.FieldValue.delete();
     update.conferidoEm = firebase.firestore.FieldValue.delete();
+    update.conferidoNegativo = firebase.firestore.FieldValue.delete();
   }
   db.collection("pedidos").doc(id).update(update).then(function () {
-    showToast(value ? "Pedido marcado como conferido ✓" : "Marcação de conferido removida.", 1800);
+    const msg = !value ? "Marcação de conferido removida." : (negativo ? "Pedido marcado como fora do padrão ❌" : "Pedido marcado como conferido ✓");
+    showToast(msg, 1800);
   }).catch(function (e) {
     console.error(e);
     showToast("Erro ao atualizar a conferência do pedido.");
@@ -1211,11 +1221,12 @@ function renderPedido(user) {
     '<div class="card" style="padding:12px 14px;">' +
       '<div style="font-size:12px;color:var(--muted);font-weight:600;margin-bottom:8px;">Conferência (somente ADM)</div>' +
       (p.conferido
-        ? '<div class="meta" style="color:var(--muted);font-size:12.5px;margin-bottom:10px;">✅ Conferido' +
+        ? '<div class="meta" style="color:var(--muted);font-size:12.5px;margin-bottom:10px;">' + (p.conferidoNegativo ? '❌ Fora do padrão' : '✅ Conferido') +
             (p.conferidoPor ? ' por ' + escapeHtml(p.conferidoPor) : '') +
             (p.conferidoEm ? ' em ' + formatDateTime(p.conferidoEm) : '') + '</div>' +
           '<button class="btn secondary" data-action="toggle-conferido" data-valor="0">Desfazer conferência</button>'
-        : '<button class="btn secondary" data-action="toggle-conferido" data-valor="1">✅ Marcar como conferido</button>'
+        : '<button class="btn secondary" style="margin-bottom:8px;" data-action="toggle-conferido" data-valor="1">✅ Marcar como conferido</button>' +
+          '<button class="btn secondary" data-action="toggle-conferido" data-valor="1" data-negativo="1">❌ Fora do padrão</button>'
       ) +
     '</div>'
   ) : "";
@@ -1375,7 +1386,11 @@ function renderAdmin(user) {
         }).join("") +
         ((caminhaoInfo(p) || p.conferido) ? '<div style="margin-top:12px;">' + camBadgeHtml(p) + confBadgeHtml(p) + '</div>' : '') +
         (p.observacao ? '<div style="margin-top:12px;padding:10px 12px;background:var(--warn-bg);border-radius:10px;font-size:13px;color:var(--text);">📝 <b>Observação:</b> ' + escapeHtml(p.observacao) + '</div>' : '') +
-        '<button class="btn secondary" style="margin-top:14px;" data-action="toggle-conferido" data-valor="' + (p.conferido ? "0" : "1") + '" data-id="' + escapeHtml(p.id) + '">' + (p.conferido ? "Desfazer conferência" : "✅ Marcar como conferido") + '</button>' +
+        (p.conferido
+          ? '<button class="btn secondary" style="margin-top:14px;" data-action="toggle-conferido" data-valor="0" data-id="' + escapeHtml(p.id) + '">Desfazer conferência</button>'
+          : '<button class="btn secondary" style="margin-top:14px;" data-action="toggle-conferido" data-valor="1" data-id="' + escapeHtml(p.id) + '">✅ Marcar como conferido</button>' +
+            '<button class="btn secondary" style="margin-top:10px;" data-action="toggle-conferido" data-valor="1" data-negativo="1" data-id="' + escapeHtml(p.id) + '">❌ Fora do padrão</button>'
+        ) +
         '<button class="btn secondary" style="margin-top:10px;" data-action="open-pedido" data-id="' + escapeHtml(p.id) + '">Abrir tela do pedido</button>' +
         '<div style="text-align:center;margin-top:14px;">' +
           '<button class="btn danger" style="width:auto;padding:8px 16px;font-size:13px;" data-action="delete-pedido" data-id="' + escapeHtml(p.id) + '">🗑 Excluir pedido</button>' +
@@ -1456,7 +1471,7 @@ document.addEventListener("click", function (e) {
   } else if (action === "set-caminhao") {
     setCaminhao(el.getAttribute("data-caminhao"));
   } else if (action === "toggle-conferido") {
-    setConferido(el.getAttribute("data-valor") === "1", el.getAttribute("data-id") || undefined);
+    setConferido(el.getAttribute("data-valor") === "1", el.getAttribute("data-id") || undefined, el.getAttribute("data-negativo") === "1");
   } else if (action === "set-tipo-entrega") {
     const novoTipo = el.getAttribute("data-tipo");
     const p = state.pedidoData;
